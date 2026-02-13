@@ -1,0 +1,99 @@
+.crop-card {
+  background: var(--surface-glass);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 1.8rem;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 1rem;
+}
+
+.crop-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.crop-card-header h3 {
+  margin-bottom: 0.4rem;
+}
+
+.crop-location {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.crop-delete {
+  border: none;
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.crop-meta {
+  display: grid;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.crop-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.crop-stage {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  background: rgba(31, 77, 58, 0.08);
+  border-radius: 12px;
+}
+
+.stage-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.stage-value {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.crop-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.status-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.status-value {
+  font-weight: 600;
+}
+
+.crop-actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.crop-actions .btn {
+  flex: 1 1 auto;
+}

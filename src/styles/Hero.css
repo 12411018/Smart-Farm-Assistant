@@ -1,0 +1,45 @@
+/* Shared hero/header layout */
+.page-hero {
+  text-align: center;
+  margin: 0 auto 2.5rem;
+  max-width: 720px;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.page-hero__icon {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: rgba(31, 77, 58, 0.1);
+  color: var(--primary);
+}
+
+.page-hero h1 {
+  margin: 0;
+  font-size: 2rem;
+  color: var(--primary);
+}
+
+.page-hero__subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .page-hero {
+    margin-bottom: 2rem;
+  }
+
+  .page-hero h1 {
+    font-size: 1.7rem;
+  }
+}

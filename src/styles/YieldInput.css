@@ -1,0 +1,139 @@
+/* Yield Input Page Styles */
+.yield-input-page {
+  flex: 1;
+  padding: 3rem 0 4rem;
+}
+
+.form-card {
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.form-steps {
+  display: grid;
+  gap: 1.8rem;
+}
+
+.step-card {
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--border);
+}
+
+.step-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.step-index {
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(31, 77, 58, 0.12);
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.label-icon {
+  color: var(--primary);
+}
+
+.form-input {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 1rem;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.85);
+  transition: all 0.25s ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: rgba(31, 77, 58, 0.4);
+  box-shadow: var(--glow);
+}
+
+.submit-btn {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+/* Success Message */
+.success-message {
+  text-align: center;
+  padding: 2rem;
+}
+
+.success-icon {
+  color: var(--primary);
+  margin-bottom: 1rem;
+  animation: scaleIn 0.5s ease;
+}
+
+.success-message h2 {
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+
+.success-message p {
+  color: var(--muted);
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .yield-input-page {
+    padding: 2rem 0 3rem;
+  }
+
+  .form-header {
+    margin-bottom: 2rem;
+  }
+}

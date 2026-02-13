@@ -1,0 +1,68 @@
+/* Irrigation Control Center */
+.irrigation-page {
+  padding: 3rem 0 4rem;
+}
+
+.irrigation-page .page-hero {
+  margin-bottom: 2rem;
+}
+
+
+.irrigation-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.weather-intel {
+  display: grid;
+  gap: 1rem;
+}
+
+.weather-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.weather-grid span {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.weather-alerts {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.irrigation-bottom {
+  display: grid;
+  grid-template-columns: 1.4fr 0.6fr;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.insight-box p {
+  color: var(--muted);
+  margin-top: 0.6rem;
+}
+
+.irrigation-empty {
+  display: grid;
+  gap: 1rem;
+  place-items: center;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .irrigation-grid,
+  .irrigation-bottom {
+    grid-template-columns: 1fr;
+  }
+}
+
