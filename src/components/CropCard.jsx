@@ -13,32 +13,23 @@ function CropCard({
   weatherRisk,
 }) {
   const sowingDate = plan?.sowingDate ? new Date(plan.sowingDate) : null;
-  const daysSince = useMemo(() => {
-    if (!sowingDate) return 0;
-    const diff = Date.now() - sowingDate.getTime();
-    return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
-  }, [sowingDate]);
+  const daysSince = plan?.daysPassed ?? 0;
 
   const totalDays = plan?.growthDurationDays || 0;
 
-  const currentStage = useMemo(() => {
-    if (!details?.calendar) return null;
-    const today = new Date().toISOString().split('T')[0];
-    return details.calendar.find((stage) => {
-      const start = new Date(stage.startDate).toISOString().split('T')[0];
-      const end = new Date(stage.endDate).toISOString().split('T')[0];
-      return today >= start && today <= end;
-    });
-  }, [details]);
+  const currentStage = plan?.currentStage || plan?.overallStatus || 'Not started';
 
   const nextIrrigation = useMemo(() => {
+    if (plan?.nextIrrigationDate) {
+      return { date: plan.nextIrrigationDate };
+    }
     if (!details?.irrigationSchedule) return null;
     const today = new Date().toISOString();
     const upcoming = details.irrigationSchedule
       .filter((entry) => entry.date >= today)
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     return upcoming[0] || null;
-  }, [details]);
+  }, [plan, details]);
 
   return (
     <div className="crop-card">
@@ -68,7 +59,7 @@ function CropCard({
 
       <div className="crop-stage">
         <span className="stage-label">Current stage</span>
-        <span className="stage-value">{currentStage?.stage || 'Not started'}</span>
+        <span className="stage-value">{currentStage || 'Not started'}</span>
       </div>
 
       <CropProgress daysSince={daysSince} totalDays={totalDays} />

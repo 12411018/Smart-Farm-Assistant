@@ -34,3 +34,11 @@ build/
 *.njsproj
 *.sln
 *.sw?
+
+
+.venv/
+__pycache__/
+backend/faiss_store/
+.env
+
+

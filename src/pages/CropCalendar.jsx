@@ -27,12 +27,35 @@ function CropCalendar() {
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [weatherDaily, setWeatherDaily] = useState([]);
+  const [calendarData, setCalendarData] = useState({ stages: [], irrigation: [], today: null, crop_health_score: null });
 
   useEffect(() => {
     if (selectedPlanId) {
       ensurePlanDetails(selectedPlanId);
     }
   }, [selectedPlanId, ensurePlanDetails]);
+
+  useEffect(() => {
+    const loadEvents = async () => {
+      if (!selectedPlanId) return;
+      try {
+        const response = await fetch(`http://127.0.0.1:8000/calendar/${selectedPlanId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setCalendarData({
+            stages: data.stages || [],
+            irrigation: data.irrigation || [],
+            today: data.today || null,
+            crop_health_score: data.crop_health_score ?? null,
+          });
+        }
+      } catch {
+        setCalendarData({ stages: [], irrigation: [], today: null, crop_health_score: null });
+      }
+    };
+
+    loadEvents();
+  }, [selectedPlanId]);
 
   useEffect(() => {
     const loadWeather = async () => {
@@ -51,22 +74,30 @@ function CropCalendar() {
   const planData = selectedPlanDetails;
 
   const getStageForDate = (date) => {
-    if (!planData?.calendar) return null;
     const dateStr = date.toISOString().split('T')[0];
-    return planData.calendar.find((stage) => {
-      const startDate = new Date(stage.startDate).toISOString().split('T')[0];
-      const endDate = new Date(stage.endDate).toISOString().split('T')[0];
-      return dateStr >= startDate && dateStr <= endDate;
+    return calendarData.stages.find((stage) => {
+      const start = new Date(stage.start_date).toISOString().split('T')[0];
+      const end = new Date(stage.end_date).toISOString().split('T')[0];
+      return dateStr >= start && dateStr <= end;
     });
   };
 
   const getIrrigationForDate = (date) => {
-    if (!planData?.irrigationSchedule) return null;
     const dateStr = date.toISOString().split('T')[0];
-    return planData.irrigationSchedule.find((irr) => {
+    return calendarData.irrigation.find((irr) => {
       const irrDate = new Date(irr.date).toISOString().split('T')[0];
       return irrDate === dateStr;
     });
+  };
+
+  const getIrrigationAmount = (irrigation) => {
+    if (!irrigation) return null;
+    return irrigation.water_amount ?? irrigation.water_liters ?? irrigation.waterAmountLiters ?? null;
+  };
+
+  const isIrrigationAdjusted = (irrigation) => {
+    if (!irrigation) return false;
+    return irrigation.adjusted ?? irrigation.auto_adjusted ?? irrigation.autoAdjusted ?? false;
   };
 
   const weatherAlertDates = useMemo(() => {
@@ -86,10 +117,10 @@ function CropCalendar() {
   }, [weatherDaily]);
 
   const harvestDate = useMemo(() => {
-    if (!planData?.calendar?.length) return null;
-    const lastStage = planData.calendar[planData.calendar.length - 1];
-    return new Date(lastStage.endDate).toISOString().split('T')[0];
-  }, [planData]);
+    if (!calendarData.stages.length) return null;
+    const lastStage = calendarData.stages[calendarData.stages.length - 1];
+    return new Date(lastStage.end_date).toISOString().split('T')[0];
+  }, [calendarData]);
 
   const tileClassName = ({ date, view }) => {
     if (view !== 'month') return null;
@@ -99,16 +130,20 @@ function CropCalendar() {
     const tileDate = date.toISOString().split('T')[0];
 
     if (stage) {
-      const stageName = stage.stage.toLowerCase().replace(/\s+/g, '-');
+      const stageName = stage.name.toLowerCase().replace(/\s+/g, '-');
       classes.push(`stage-${stageName}`);
     }
 
     if (irrigation) {
-      classes.push('irrigation-day');
+      classes.push(isIrrigationAdjusted(irrigation) ? 'irrigation-day-adjusted' : 'irrigation-day');
     }
 
     if (weatherAlertDates.has(tileDate)) {
       classes.push('weather-alert-day');
+    }
+
+    if (calendarData.today && tileDate === calendarData.today) {
+      classes.push('today-marker');
     }
 
     if (harvestDate && tileDate === harvestDate) {
@@ -184,13 +219,13 @@ function CropCalendar() {
               <div className="legend">
                 <h3>Stage Legend</h3>
                 <div className="legend-items">
-                  {planData.calendar.map((stage) => (
-                    <div key={stage.stage} className="legend-item">
+                  {calendarData.stages.map((stage) => (
+                    <div key={stage.name} className="legend-item">
                       <span
                         className="legend-color"
-                        style={{ backgroundColor: getStageColor(stage.stage) }}
+                        style={{ backgroundColor: getStageColor(stage.name) }}
                       ></span>
-                      <span>{stage.stage}</span>
+                      <span>{stage.name}</span>
                     </div>
                   ))}
                 </div>
@@ -206,8 +241,11 @@ function CropCalendar() {
             <div className="calendar-summary card">
               <h3>Selected Date Details</h3>
               <p><strong>Date:</strong> {selectedDate.toDateString()}</p>
-              <p><strong>Stage:</strong> {getStageForDate(selectedDate)?.stage || 'No stage'}</p>
-              <p><strong>Irrigation:</strong> {getIrrigationForDate(selectedDate)?.waterAmountLiters ? `${getIrrigationForDate(selectedDate).waterAmountLiters} L` : 'None'}</p>
+              <p><strong>Stage:</strong> {getStageForDate(selectedDate)?.name || 'No stage'}</p>
+              <p><strong>Irrigation:</strong> {getIrrigationAmount(getIrrigationForDate(selectedDate)) ? `${getIrrigationAmount(getIrrigationForDate(selectedDate))} L` : 'None'}</p>
+              {calendarData.crop_health_score !== null && (
+                <p><strong>Crop Health:</strong> {calendarData.crop_health_score}</p>
+              )}
             </div>
           </div>
         )}

@@ -1,6 +1,4 @@
 import React, { useCallback, useState } from 'react';
-import { collection, getDocs, orderBy, query, where, limit as limitDocs } from 'firebase/firestore';
-import { firestore } from '../firebase';
 import '../styles/IrrigationLogs.css';
 
 function IrrigationLogs({ cropPlanId }) {
@@ -16,14 +14,12 @@ function IrrigationLogs({ cropPlanId }) {
     setError(null);
 
     try {
-      const logsQuery = query(
-        collection(firestore, 'irrigation_logs'),
-        where('cropPlanId', '==', cropPlanId),
-        orderBy('createdAt', 'desc'),
-        limitDocs(20)
-      );
-      const snapshot = await getDocs(logsQuery);
-      const entries = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const response = await fetch(`http://127.0.0.1:8000/irrigation/logs/${cropPlanId}?limit=20`);
+      if (!response.ok) {
+        throw new Error('Failed to load irrigation logs');
+      }
+      const data = await response.json();
+      const entries = data.logs || [];
       setLogs(entries);
       setLoaded(true);
     } catch (err) {

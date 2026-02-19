@@ -17,10 +17,27 @@ function CropManagement() {
     ensurePlanDetails,
     selectPlan,
     removePlan,
+    setPlans,
   } = useCropContext();
 
   const [weather, setWeather] = useState(null);
   const [weatherError, setWeatherError] = useState(null);
+
+  useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const response = await fetch(
+          'http://127.0.0.1:8000/crop-plan/user/demo_user'
+        );
+        const data = await response.json();
+        setPlans(data.plans);
+      } catch (error) {
+        console.error('Error fetching plans:', error);
+      }
+    };
+
+    fetchPlans();
+  }, [setPlans]);
 
   useEffect(() => {
     plans.forEach((plan) => ensurePlanDetails(plan.id));

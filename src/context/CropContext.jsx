@@ -114,11 +114,12 @@ export function CropProvider({ children }) {
     selectedPlanDetails,
     loadingPlans,
     error,
+    setPlans,
     refreshPlans,
     selectPlan,
     ensurePlanDetails,
     removePlan,
-  }), [plans, planDetails, selectedPlanId, selectedPlan, selectedPlanDetails, loadingPlans, error, refreshPlans, selectPlan, ensurePlanDetails, removePlan]);
+  }), [plans, planDetails, selectedPlanId, selectedPlan, selectedPlanDetails, loadingPlans, error, setPlans, refreshPlans, selectPlan, ensurePlanDetails, removePlan]);
 
   return (
     <CropContext.Provider value={value}>

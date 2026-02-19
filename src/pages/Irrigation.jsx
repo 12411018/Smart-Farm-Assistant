@@ -13,12 +13,30 @@ function Irrigation() {
   const { selectedPlan, selectedPlanId, selectedPlanDetails, ensurePlanDetails } = useCropContext();
   const [weather, setWeather] = useState(null);
   const [insight, setInsight] = useState(null);
+  const [upcomingSchedule, setUpcomingSchedule] = useState([]);
 
   useEffect(() => {
     if (selectedPlanId) {
       ensurePlanDetails(selectedPlanId);
     }
   }, [selectedPlanId, ensurePlanDetails]);
+
+  useEffect(() => {
+    const loadSchedule = async () => {
+      if (!selectedPlanId) return;
+      try {
+        const response = await fetch(`http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setUpcomingSchedule(data);
+        }
+      } catch {
+        setUpcomingSchedule([]);
+      }
+    };
+
+    loadSchedule();
+  }, [selectedPlanId]);
 
   useEffect(() => {
     const loadWeather = async () => {
@@ -53,24 +71,16 @@ function Irrigation() {
     loadInsight();
   }, [selectedPlanId, weather]);
 
-  const currentStage = useMemo(() => {
-    if (!selectedPlanDetails?.calendar) return null;
-    const today = new Date().toISOString().split('T')[0];
-    return selectedPlanDetails.calendar.find((stage) => {
-      const start = new Date(stage.startDate).toISOString().split('T')[0];
-      const end = new Date(stage.endDate).toISOString().split('T')[0];
-      return today >= start && today <= end;
-    });
-  }, [selectedPlanDetails]);
+  const currentStage = useMemo(() => selectedPlan?.currentStage || null, [selectedPlan]);
 
   const todayIrrigation = useMemo(() => {
-    if (!selectedPlanDetails?.irrigationSchedule) return null;
+    if (!upcomingSchedule.length) return null;
     const today = new Date().toISOString().split('T')[0];
-    return selectedPlanDetails.irrigationSchedule.find((item) => {
+    return upcomingSchedule.find((item) => {
       const date = new Date(item.date).toISOString().split('T')[0];
       return date === today;
     });
-  }, [selectedPlanDetails]);
+  }, [upcomingSchedule]);
 
   const adjustmentMessage = useMemo(() => {
     if (!weather) return 'No weather adjustments detected.';
@@ -83,29 +93,20 @@ function Irrigation() {
   }, [weather]);
 
   const nextSevenDays = useMemo(() => {
-    if (!selectedPlanDetails?.irrigationSchedule) return [];
-    const today = new Date();
-    const end = new Date();
-    end.setDate(today.getDate() + 7);
-
-    return selectedPlanDetails.irrigationSchedule
-      .filter((item) => {
-        const date = new Date(item.date);
-        return date >= today && date <= end;
-      })
-      .map((item) => {
-        const dateLabel = new Date(item.date).toLocaleDateString();
-        const weatherAdj = weather?.rainChance > 60 ? 'Rain risk' : 'Normal';
-        const status = weather?.rainChance > 60 ? 'Skipped' : (item.status || 'Pending');
-        return {
-          date: dateLabel,
-          stage: item.stage,
-          plannedWater: `${item.waterAmountLiters} L`,
-          weatherAdjustment: weatherAdj,
-          status,
-        };
-      });
-  }, [selectedPlanDetails, weather]);
+    if (!upcomingSchedule.length) return [];
+    return upcomingSchedule.map((item) => {
+      const dateLabel = new Date(item.date).toLocaleDateString();
+      const weatherAdj = item.autoAdjusted ? 'Weather adjusted' : weather?.rainChance > 60 ? 'Rain risk' : 'Normal';
+      const status = item.status || 'Pending';
+      return {
+        date: dateLabel,
+        stage: item.stage,
+        plannedWater: `${item.water || item.waterAmountLiters || ''} L`,
+        weatherAdjustment: weatherAdj,
+        status,
+      };
+    });
+  }, [upcomingSchedule, weather]);
 
   if (!selectedPlanId) {
     return (
@@ -133,9 +134,9 @@ function Irrigation() {
         <div className="irrigation-grid">
           <IrrigationStatusCard
             cropName={selectedPlan?.cropName}
-            stage={currentStage?.stage}
+            stage={currentStage}
             recommendation={todayIrrigation ? 'Yes' : 'No'}
-            waterAmount={todayIrrigation?.waterAmountLiters}
+            waterAmount={todayIrrigation?.water || todayIrrigation?.waterAmountLiters}
             method={selectedPlan?.irrigationMethod}
             adjustment={adjustmentMessage}
           />

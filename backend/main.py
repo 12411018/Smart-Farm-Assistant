@@ -1,36 +1,41 @@
 import os
+import uuid
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, date
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from sqlalchemy.orm import Session
 from vectorstore.search import RAGSearch, build_context_text
 from weather_engine.weather_service import fetch_weather_data
 from weather_engine.weather_rules import build_weather_rules
 from weather_engine.weather_ai import generate_weather_advice
 from crop_engine.crop_planner import (
-    generate_crop_stages,
-    calculate_total_duration,
-    generate_irrigation_schedule,
     get_current_stage,
-    adjust_irrigation_for_weather,
 )
+from crop_engine.intelligence import compute_water_liters
 from crop_engine.crop_insights import generate_crop_insight
 from firebase_config import get_firestore, is_firebase_enabled
 from logging_service import log_yield_input, log_plan_created, log_plan_deleted, log_irrigation_adjustment, get_all_logs
-import uuid
+from database import get_db
+from models import CropStage, IrrigationSchedule, CropPlan
+from services.crop_status_engine import calculate_crop_status
+from irrigation_engine.decision import generate_irrigation_schedule
+from services.crop_service import (
+    adjust_schedule_for_weather,
+    create_crop_plan as create_crop_plan_db,
+    fetch_crop_plan,
+    list_user_plans,
+    serialize_plan,
+    serialize_schedule,
+    serialize_stage,
+    delete_plan as delete_plan_db,
+    fetch_irrigation_logs,
+)
+from schemas import ChatRequest, WeatherRequest, CropPlanRequest
 
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:latest"
-
-# In-memory storage for crop plans when Firebase is not configured
-_memory_store = {
-    "crop_plans": {},
-    "crop_calendar": [],
-    "irrigation_schedule": [],
-}
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -73,38 +78,61 @@ app = FastAPI(title="Smart Farming Assistant API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class ChatRequest(BaseModel):
-    message: str
-    context: str = ""
-
-
-class WeatherRequest(BaseModel):
-    lat: float
-    lon: float
-    include_ai: bool = True
-
-
-class CropPlanRequest(BaseModel):
-    userId: str
-    cropName: str
-    location: str
-    soilType: str
-    sowingDate: str
-    irrigationMethod: str
-    landSizeAcres: float
-    expectedInvestment: Optional[float] = None
-    waterSourceType: str
-
-
 rag_search = RAGSearch()
 chat_history = []
+
+
+def _as_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _sync_plan_to_firestore(db_client, crop_plan_id: str, plan_data: dict, stages: list, irrigation_schedule: list) -> bool:
+    """Persist plan data to Firestore for compatibility."""
+    if db_client is None:
+        return False
+    try:
+        plan_payload = {
+            "userId": plan_data.get("userId"),
+            "cropName": plan_data.get("cropName"),
+            "location": plan_data.get("location"),
+            "soilType": plan_data.get("soilType"),
+            "sowingDate": plan_data.get("sowingDate"),
+            "growthDurationDays": plan_data.get("growthDurationDays"),
+            "irrigationMethod": plan_data.get("irrigationMethod"),
+            "landSizeAcres": plan_data.get("landSizeAcres"),
+            "expectedInvestment": plan_data.get("expectedInvestment"),
+            "waterSourceType": plan_data.get("waterSourceType"),
+            "createdAt": plan_data.get("createdAt", datetime.now().isoformat()),
+            "status": plan_data.get("status", "active"),
+        }
+        crop_plan_ref = db_client.collection("crop_plans").document(crop_plan_id)
+        crop_plan_ref.set(plan_payload)
+
+        for stage in stages:
+            db_client.collection("crop_calendar").add({"cropPlanId": crop_plan_id, **stage})
+
+        for schedule_item in irrigation_schedule:
+            db_client.collection("irrigation_schedule").add({"cropPlanId": crop_plan_id, **schedule_item})
+        return True
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[WARNING] Firebase sync failed for plan {crop_plan_id}: {exc}")
+        return False
 
 
 def _format_history(limit: int = 6) -> str:
@@ -216,383 +244,216 @@ def health():
 
 
 @app.post("/crop-plan/create")
-def create_crop_plan(req: CropPlanRequest):
-    """Create new crop plan with calendar and irrigation schedule."""
+def create_crop_plan(req: CropPlanRequest, db: Session = Depends(get_db)):
+    """Create new crop plan with calendar and irrigation schedule (PostgreSQL first, Firebase mirrored)."""
     try:
-        db = get_firestore()
-        
-        # Calculate total duration
-        total_duration = calculate_total_duration(req.cropName)
-        
-        # Generate growth stages
-        stages = generate_crop_stages(req.cropName, req.sowingDate)
-        
-        # Generate irrigation schedule
-        irrigation_schedule = generate_irrigation_schedule(
-            req.cropName,
-            req.sowingDate,
-            req.landSizeAcres,
-            req.irrigationMethod,
-            stages
-        )
-        
-        # Generate crop plan ID
-        crop_plan_id = str(uuid.uuid4())
-        
-        # Create crop plan document
-        crop_plan_data = {
-            "userId": req.userId,
-            "cropName": req.cropName,
-            "location": req.location,
-            "soilType": req.soilType,
-            "sowingDate": req.sowingDate,
-            "growthDurationDays": total_duration,
-            "irrigationMethod": req.irrigationMethod,
-            "landSizeAcres": req.landSizeAcres,
-            "expectedInvestment": req.expectedInvestment,
-            "waterSourceType": req.waterSourceType,
-            "createdAt": datetime.now().isoformat(),
-            "status": "active"
-        }
-        
-        # Save to Firestore if available
-        if db is not None:
-            crop_plan_ref = db.collection("crop_plans").document()
-            crop_plan_ref.set(crop_plan_data)
-            crop_plan_id = crop_plan_ref.id
-            
-            # Save stages to crop_calendar
-            for stage in stages:
-                calendar_data = {
-                    "cropPlanId": crop_plan_id,
-                    **stage,
-                }
-                db.collection("crop_calendar").add(calendar_data)
-            
-            # Save irrigation schedule
-            for schedule_item in irrigation_schedule:
-                schedule_data = {
-                    "cropPlanId": crop_plan_id,
-                    **schedule_item,
-                }
-                db.collection("irrigation_schedule").add(schedule_data)
-            
-            print(f"[INFO] Crop plan saved to Firebase: {crop_plan_id}")
-        else:
-            # Save to memory store when Firebase not configured
-            _memory_store["crop_plans"][crop_plan_id] = crop_plan_data
-            
-            for stage in stages:
-                stage_data = {"cropPlanId": crop_plan_id, **stage}
-                _memory_store["crop_calendar"].append(stage_data)
-            
-            for schedule_item in irrigation_schedule:
-                schedule_data = {"cropPlanId": crop_plan_id, **schedule_item}
-                _memory_store["irrigation_schedule"].append(schedule_data)
-            
-            print(f"[WARNING] Crop plan saved to memory (Firebase not configured): {crop_plan_id}")
-        
-        # Log the plan creation
-        log_plan_created(crop_plan_id, req.userId, req.cropName, req.location)
-        
+        plan_data, stages, irrigation_schedule, total_duration = create_crop_plan_db(db, req.dict())
+        firebase_db = get_firestore()
+        firebase_enabled = _sync_plan_to_firestore(firebase_db, plan_data["id"], plan_data, stages, irrigation_schedule)
+
+        log_plan_created(plan_data["id"], req.userId, req.cropName, req.location)
+
         return {
             "success": True,
-            "cropPlanId": crop_plan_id,
+            "cropPlanId": plan_data["id"],
             "stages": stages,
             "irrigationSchedule": irrigation_schedule,
             "totalDurationDays": total_duration,
-            "firebaseEnabled": db is not None,
+            "firebaseEnabled": firebase_enabled,
         }
-        
-    except Exception as exc:
+
+    except Exception as exc:  # pylint: disable=broad-except
         print(f"[ERROR] Failed to create crop plan: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/crop-plan/{crop_plan_id}")
-def get_crop_plan(crop_plan_id: str):
-    """Get crop plan details with calendar and schedule."""
+def get_crop_plan(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Get crop plan details with calendar and schedule from PostgreSQL."""
     try:
-        db = get_firestore()
-        
-        if db is None:
-            # Use memory store
-            crop_plan_data = _memory_store["crop_plans"].get(crop_plan_id)
-            if not crop_plan_data:
-                raise HTTPException(status_code=404, detail="Crop plan not found")
-            
-            calendar = [c for c in _memory_store["crop_calendar"] if c["cropPlanId"] == crop_plan_id]
-            schedule = [s for s in _memory_store["irrigation_schedule"] if s["cropPlanId"] == crop_plan_id]
-            current_stage = get_current_stage(calendar)
-            
-            return {
-                "cropPlan": crop_plan_data,
-                "calendar": calendar,
-                "irrigationSchedule": schedule,
-                "currentStage": current_stage,
-            }
-        
-        # Get crop plan
-        crop_plan_ref = db.collection("crop_plans").document(crop_plan_id)
-        crop_plan_doc = crop_plan_ref.get()
-        
-        if not crop_plan_doc.exists:
+        plan, stage_rows, schedule_rows = fetch_crop_plan(db, crop_plan_id)
+        if plan is None:
             raise HTTPException(status_code=404, detail="Crop plan not found")
-        
-        crop_plan_data = crop_plan_doc.to_dict()
-        
-        # Get calendar
-        calendar_docs = db.collection("crop_calendar").where("cropPlanId", "==", crop_plan_id).stream()
-        calendar = [doc.to_dict() for doc in calendar_docs]
-        
-        # Get irrigation schedule
-        schedule_docs = db.collection("irrigation_schedule").where("cropPlanId", "==", crop_plan_id).stream()
-        schedule = [doc.to_dict() for doc in schedule_docs]
-        
-        # Get current stage
-        current_stage = get_current_stage(calendar)
-        
+
+        stages = [serialize_stage(s) for s in stage_rows]
+        schedule = [serialize_schedule(s) for s in schedule_rows]
+        status = calculate_crop_status(plan, stage_rows)
+
         return {
-            "cropPlan": crop_plan_data,
-            "calendar": calendar,
+            "cropPlan": serialize_plan(plan, stage_rows, schedule_rows),
+            "calendar": stages,
             "irrigationSchedule": schedule,
-            "currentStage": current_stage,
+            "currentStage": status["current_stage"],
+            "overallStatus": status["overall_status"],
+            "daysPassed": status["days_passed"],
+            "progressPercent": status["progress"],
         }
-        
+
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/crop-plan/user/{user_id}")
-def get_user_crop_plans(user_id: str):
-    """Get all crop plans for a user."""
+def get_user_crop_plans(user_id: str, db: Session = Depends(get_db)):
+    """Get all crop plans for a user from PostgreSQL (Firebase flag for compatibility)."""
     try:
-        db = get_firestore()
-        
-        if db is None:
-            # Return plans from memory store
-            plans = []
-            for plan_id, plan_data in _memory_store["crop_plans"].items():
-                if plan_data.get("userId") == user_id and plan_data.get("status") == "active":
-                    plan_with_id = {"id": plan_id, **plan_data}
-                    plans.append(plan_with_id)
-            return {"plans": plans, "firebaseEnabled": False}
-        
-        plans_docs = db.collection("crop_plans").where("userId", "==", user_id).where("status", "==", "active").stream()
-        plans = []
-        
-        for doc in plans_docs:
-            plan_data = doc.to_dict()
-            plan_data["id"] = doc.id
-            plans.append(plan_data)
-        
-        return {"plans": plans, "firebaseEnabled": True}
-        
-    except Exception as exc:
+        plans = list_user_plans(db, user_id)
+        response = []
+        today = datetime.now(timezone.utc)
+        for plan in plans:
+            stages = (
+                db.query(CropStage)
+                .filter(CropStage.crop_plan_id == plan.id)
+                .order_by(CropStage.start_date)
+                .all()
+            )
+            schedule_next = (
+                db.query(IrrigationSchedule)
+                .filter(IrrigationSchedule.crop_plan_id == plan.id)
+                .filter(IrrigationSchedule.date >= today)
+                .order_by(IrrigationSchedule.date)
+                .first()
+            )
+
+            status = calculate_crop_status(plan, stages)
+
+            response.append(
+                {
+                    "id": str(plan.id),
+                    "cropName": plan.crop_name,
+                    "location": plan.location,
+                    "soilType": plan.soil_type,
+                    "sowingDate": plan.sowing_date.isoformat(),
+                    "growthDurationDays": plan.growth_duration_days,
+                    "irrigationMethod": plan.irrigation_method,
+                    "landSizeAcres": plan.land_size_acres,
+                    "expectedInvestment": plan.expected_investment,
+                    "waterSourceType": plan.water_source_type,
+                    "status": plan.status,
+                    "currentStage": status["current_stage"],
+                    "daysPassed": status["days_passed"],
+                    "overallStatus": status["overall_status"],
+                    "progressPercent": status["progress"],
+                    "nextIrrigationDate": schedule_next.date.isoformat() if schedule_next else None,
+                }
+            )
+
+        return {"plans": response, "firebaseEnabled": is_firebase_enabled()}
+
+    except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/irrigation/adjust")
-def adjust_irrigation_schedule(crop_plan_id: str, lat: float, lon: float):
-    """Adjust upcoming irrigation based on weather and log changes."""
+def adjust_irrigation_schedule(crop_plan_id: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    """Adjust upcoming irrigation based on weather and log changes (persist to PostgreSQL, optional Firebase mirror)."""
     try:
-        db = get_firestore()
-        
-        if db is None:
-            raise HTTPException(
-                status_code=503, 
-                detail="Firebase not configured. Cannot adjust irrigation schedule."
-            )
-        
-        # Get weather
         weather = fetch_weather_data(lat, lon)
         current_weather = weather["current"]
-        
-        # Get upcoming irrigation (next 7 days)
-        today = datetime.now().isoformat()
-        schedule_docs = (
-            db.collection("irrigation_schedule")
-            .where("cropPlanId", "==", crop_plan_id)
-            .where("status", "==", "pending")
-            .where("date", ">=", today)
-            .limit(7)
-            .stream()
-        )
-        
-        adjustments = []
-        
-        for doc in schedule_docs:
-            schedule_item = doc.to_dict()
-            adjusted_amount, adjustment_reason = adjust_irrigation_for_weather(schedule_item, current_weather)
-            
-            # Update schedule
-            doc.reference.update({"waterAmountLiters": adjusted_amount})
-            
-            # Log adjustment
-            if adjustment_reason != "No adjustment needed":
-                log_data = {
-                    "cropPlanId": crop_plan_id,
-                    "date": schedule_item["date"],
-                    "originalAmount": schedule_item["waterAmountLiters"],
-                    "adjustedAmount": adjusted_amount,
-                    "weatherAdjustment": adjustment_reason,
-                    "autoTriggered": True,
-                    "createdAt": datetime.now(),
-                }
-                db.collection("irrigation_logs").add(log_data)
-            
-            adjustments.append({
-                "date": schedule_item["date"],
-                "originalAmount": schedule_item["waterAmountLiters"],
-                "adjustedAmount": adjusted_amount,
-                "reason": adjustment_reason,
-            })
-        
-        return {"adjustments": adjustments}
-        
-    except Exception as exc:
+
+        adjustments = adjust_schedule_for_weather(db, crop_plan_id, current_weather)
+        for adj in adjustments:
+            log_irrigation_adjustment(
+                crop_plan_id,
+                adj["date"],
+                adj["originalAmount"],
+                adj["adjustedAmount"],
+                adj["reason"],
+            )
+
+        return {"adjustments": adjustments, "firebaseEnabled": is_firebase_enabled()}
+
+    except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/crop-insight/{crop_plan_id}")
-def get_crop_insight(crop_plan_id: str, lat: float, lon: float):
-    """Generate AI-powered crop insight."""
+def get_crop_insight(crop_plan_id: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    """Generate AI-powered crop insight using PostgreSQL data."""
     try:
-        db = get_firestore()
-        
-        if db is None:
-            raise HTTPException(
-                status_code=503, 
-                detail="Firebase not configured. Cannot retrieve crop plan for insights."
-            )
-        
-        # Get crop plan
-        crop_plan_ref = db.collection("crop_plans").document(crop_plan_id)
-        crop_plan_doc = crop_plan_ref.get()
-        
-        if not crop_plan_doc.exists:
+        plan, stage_rows, schedule_rows = fetch_crop_plan(db, crop_plan_id)
+        if plan is None:
             raise HTTPException(status_code=404, detail="Crop plan not found")
-        
-        crop_plan_data = crop_plan_doc.to_dict()
-        
-        # Get calendar for current stage
-        calendar_docs = db.collection("crop_calendar").where("cropPlanId", "==", crop_plan_id).stream()
-        calendar = [doc.to_dict() for doc in calendar_docs]
-        current_stage = get_current_stage(calendar)
-        
-        # Get upcoming irrigation
-        today = datetime.now().isoformat()
-        schedule_docs = (
-            db.collection("irrigation_schedule")
-            .where("cropPlanId", "==", crop_plan_id)
-            .where("status", "==", "pending")
-            .where("date", ">=", today)
-            .limit(3)
-            .stream()
-        )
-        upcoming_irrigation = [doc.to_dict() for doc in schedule_docs]
-        
-        # Get weather
+
+        stages = [serialize_stage(s) for s in stage_rows]
+        current_stage = get_current_stage(stages)
+
+        now = datetime.now(timezone.utc)
+        upcoming_irrigation = [
+            serialize_schedule(s)
+            for s in schedule_rows
+            if s.status == "pending" and s.date >= now
+        ][:3]
+
         weather = fetch_weather_data(lat, lon)
         current_weather = weather["current"]
-        
-        # Generate insight
+
         insight = generate_crop_insight(
             crop_data={
-                "crop_name": crop_plan_data.get("cropName"),
-                "location": crop_plan_data.get("location"),
-                "soil_type": crop_plan_data.get("soilType"),
-                "sowing_date": crop_plan_data.get("sowingDate"),
+                "crop_name": plan.crop_name,
+                "location": plan.location,
+                "soil_type": plan.soil_type,
+                "sowing_date": plan.sowing_date.isoformat(),
             },
             current_stage=current_stage,
             weather_data=current_weather,
             upcoming_irrigation=upcoming_irrigation,
         )
-        
+
         return {
             "insight": insight,
             "currentStage": current_stage,
             "upcomingIrrigation": upcoming_irrigation,
         }
-        
+
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.delete("/crop-plan/{crop_plan_id}")
-def delete_crop_plan(crop_plan_id: str):
-    """Delete a crop plan and all associated data."""
+def delete_crop_plan(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Delete a crop plan and all associated data from PostgreSQL (and Firebase if enabled)."""
     try:
-        db = get_firestore()
-        
-        # Get plan first to get crop name for logging
-        plan_data = None
-        user_id = None
-        crop_name = None
-        
-        if db is None:
-            # Get from memory store
-            plan_data = _memory_store["crop_plans"].get(crop_plan_id)
-            if not plan_data:
-                raise HTTPException(status_code=404, detail="Crop plan not found")
-            
-            user_id = plan_data.get("userId")
-            crop_name = plan_data.get("cropName")
-            
-            # Delete from memory store
-            del _memory_store["crop_plans"][crop_plan_id]
-            _memory_store["crop_calendar"] = [c for c in _memory_store["crop_calendar"] if c.get("cropPlanId") != crop_plan_id]
-            _memory_store["irrigation_schedule"] = [s for s in _memory_store["irrigation_schedule"] if s.get("cropPlanId") != crop_plan_id]
-            
-            print(f"[INFO] Crop plan deleted from memory: {crop_plan_id}")
-        else:
-            # Get plan from Firebase
-            crop_plan_ref = db.collection("crop_plans").document(crop_plan_id)
-            crop_plan_doc = crop_plan_ref.get()
-            
-            if not crop_plan_doc.exists:
-                raise HTTPException(status_code=404, detail="Crop plan not found")
-            
-            plan_data = crop_plan_doc.to_dict()
-            user_id = plan_data.get("userId")
-            crop_name = plan_data.get("cropName")
-            
-            # Delete from Firebase
-            crop_plan_ref.delete()
-            
-            # Delete related calendar entries
-            calendar_docs = db.collection("crop_calendar").where("cropPlanId", "==", crop_plan_id).stream()
-            for doc in calendar_docs:
-                doc.reference.delete()
-            
-            # Delete related irrigation schedule
-            schedule_docs = db.collection("irrigation_schedule").where("cropPlanId", "==", crop_plan_id).stream()
-            for doc in schedule_docs:
-                doc.reference.delete()
-            
-            # Delete related irrigation logs
-            log_docs = db.collection("irrigation_logs").where("cropPlanId", "==", crop_plan_id).stream()
-            for doc in log_docs:
-                doc.reference.delete()
-            
-            print(f"[INFO] Crop plan deleted from Firebase: {crop_plan_id}")
-        
-        # Log the deletion
+        plan, user_id, crop_name = delete_plan_db(db, crop_plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        firebase_db = get_firestore()
+        if firebase_db is not None:
+            try:
+                crop_plan_ref = firebase_db.collection("crop_plans").document(crop_plan_id)
+                crop_plan_ref.delete()
+
+                calendar_docs = firebase_db.collection("crop_calendar").where("cropPlanId", "==", crop_plan_id).stream()
+                for doc in calendar_docs:
+                    doc.reference.delete()
+
+                schedule_docs = firebase_db.collection("irrigation_schedule").where("cropPlanId", "==", crop_plan_id).stream()
+                for doc in schedule_docs:
+                    doc.reference.delete()
+
+                log_docs = firebase_db.collection("irrigation_logs").where("cropPlanId", "==", crop_plan_id).stream()
+                for doc in log_docs:
+                    doc.reference.delete()
+                print(f"[INFO] Crop plan deleted from Firebase: {crop_plan_id}")
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[WARNING] Failed to delete Firebase artifacts for {crop_plan_id}: {exc}")
+
         log_plan_deleted(crop_plan_id, user_id, crop_name)
-        
+
         return {
             "success": True,
             "message": f"Crop plan '{crop_name}' deleted successfully",
             "deletedPlanId": crop_plan_id,
         }
-        
+
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         print(f"[ERROR] Failed to delete crop plan: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -607,10 +468,191 @@ def get_operation_logs():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/irrigation/logs/{crop_plan_id}")
+def get_irrigation_logs(crop_plan_id: str, limit: int = 20, db: Session = Depends(get_db)):
+    """Fetch irrigation adjustment logs from PostgreSQL."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        logs = fetch_irrigation_logs(db, crop_plan_id, limit=limit)
+        serialized = [
+            {
+                "date": log.date.isoformat() if log.date else None,
+                "originalAmount": log.original_amount,
+                "adjustedAmount": log.adjusted_amount,
+                "reason": log.weather_adjustment,
+                "autoTriggered": log.auto_triggered,
+                "createdAt": log.created_at.isoformat() if getattr(log, "created_at", None) else None,
+            }
+            for log in logs
+        ]
+        return {"logs": serialized}
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/irrigation/schedule/{crop_plan_id}")
+def get_irrigation_schedule(crop_plan_id: str, limit: int = 7, db: Session = Depends(get_db)):
+    """Fetch upcoming irrigation schedule entries."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc)
+        entries = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= today)
+            .order_by(IrrigationSchedule.date)
+            .limit(limit)
+            .all()
+        )
+        serialized = [
+            {
+                "date": item.date.isoformat(),
+                "stage": item.stage,
+                "water": item.water_amount_liters,
+                "status": item.status,
+                "autoAdjusted": item.auto_adjusted,
+            }
+            for item in entries
+        ]
+        return serialized
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/calendar/{crop_plan_id}")
+def get_calendar_events(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Return structured calendar data for stages, irrigation, health, and today marker."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        stages = (
+            db.query(CropStage)
+            .filter(CropStage.crop_plan_id == plan_uuid)
+            .order_by(CropStage.start_date)
+            .all()
+        )
+        schedule = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .order_by(IrrigationSchedule.date)
+            .all()
+        )
+
+        stages_payload = [
+            {
+                "name": stage.stage,
+                "start_date": stage.start_date.isoformat(),
+                "end_date": stage.end_date.isoformat(),
+            }
+            for stage in stages
+        ]
+
+        irrigation_payload = [
+            {
+                "date": item.date.isoformat(),
+                "water_amount": item.water_amount_liters,
+                "adjusted": item.auto_adjusted,
+                "stage": item.stage,
+                "status": item.status,
+            }
+            for item in schedule
+        ]
+
+        # Health score heuristic: start from 100 and subtract stresses
+        skipped_irrigations = sum(1 for i in irrigation_payload if (i.get("status") or "").lower() in {"skipped", "missed"} or i.get("water_amount", 0) == 0)
+        moisture_stress = 0  # placeholder until moisture sensor input is wired
+        heat_stress = 0       # placeholder; could be derived from recent weather logs
+
+        health_score = 100 - moisture_stress - heat_stress - (skipped_irrigations * 5)
+        health_score = max(0, min(100, health_score))
+
+        return {
+            "stages": stages_payload,
+            "irrigation": irrigation_payload,
+            "today": datetime.now(timezone.utc).date().isoformat(),
+            "crop_health_score": health_score,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/irrigation/trigger/{crop_plan_id}")
+def trigger_irrigation(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Endpoint polled by Arduino to decide irrigation for today."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc).date()
+        entry = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc))
+            .order_by(IrrigationSchedule.date)
+            .first()
+        )
+        if entry is None:
+            return {"should_irrigate": False}
+
+        return {
+            "should_irrigate": True,
+            "water_liters": entry.water_amount_liters,
+            "method": entry.method,
+            "schedule_id": str(entry.id),
+            "date": entry.date.isoformat(),
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/irrigation/next-command/{crop_plan_id}")
+def next_command(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Arduino-friendly next action for irrigation."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc).date()
+        start_today = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        entry = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= start_today)
+            .order_by(IrrigationSchedule.date)
+            .first()
+        )
+        if entry is None or entry.water_amount_liters <= 0 or entry.status not in {"pending", None}:
+            return {
+                "action": "SKIP",
+                "liters": 0,
+                "duration_seconds": 0,
+            }
+
+        liters = entry.water_amount_liters
+        duration_seconds = int(max(0, liters) / 10)  # simple flow heuristic
+        return {
+            "action": "WATER",
+            "liters": liters,
+            "duration_seconds": duration_seconds,
+            "method": entry.method,
+            "schedule_id": str(entry.id),
+            "date": entry.date.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.on_event("startup")
 def warmup():
     try:
-        generate_reply("hello")
+        # Warm minimal dependencies without blocking on local LLM
         get_firestore()  # Initialize Firebase
     except Exception:
         pass

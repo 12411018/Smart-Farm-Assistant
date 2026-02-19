@@ -133,8 +133,18 @@
   border: 2px solid #2f80ed;
 }
 
+.react-calendar__tile.irrigation-day-adjusted {
+  border: 2px dashed #2f80ed;
+  background: rgba(47, 128, 237, 0.08);
+}
+
 .react-calendar__tile.weather-alert-day {
   box-shadow: inset 0 0 0 2px rgba(239, 68, 68, 0.6);
+}
+
+.react-calendar__tile.today-marker {
+  outline: 2px solid rgba(31, 77, 58, 0.6);
+  outline-offset: -2px;
 }
 
 .tile-content {

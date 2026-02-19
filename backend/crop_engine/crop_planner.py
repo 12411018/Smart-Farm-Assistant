@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from services.irrigation_engine import calculate_water_liters
 from .crop_data import CROP_STAGES, IRRIGATION_FREQUENCY, WATER_REQUIREMENTS
 
 
@@ -40,8 +41,6 @@ def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, ir
     """Generate complete irrigation schedule."""
     if crop_name not in WATER_REQUIREMENTS:
         return []
-
-    water_per_acre = WATER_REQUIREMENTS[crop_name].get(irrigation_method, 3000)
     schedule = []
 
     for stage in stages:
@@ -51,7 +50,7 @@ def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, ir
 
         current_date = stage_start
         while current_date <= stage_end:
-            water_amount = water_per_acre * land_size_acres
+            water_amount = calculate_water_liters(stage["stage"], land_size_acres)
             
             schedule.append({
                 "date": current_date.isoformat(),
@@ -68,15 +67,20 @@ def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, ir
 
 def get_current_stage(stages):
     """Get current growth stage based on today's date."""
-    now = datetime.now()
-    
+    now = datetime.now(timezone.utc)
+
     for stage in stages:
         start = datetime.fromisoformat(stage["startDate"])
         end = datetime.fromisoformat(stage["endDate"])
-        
+
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+
         if start <= now <= end:
             return stage["stage"]
-    
+
     return None
 
 

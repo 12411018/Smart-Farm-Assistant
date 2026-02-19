@@ -3,3 +3,6 @@ uvicorn
 requests
 python-dotenv
 firebase-admin
+sqlalchemy
+psycopg2-binary
+alembic
