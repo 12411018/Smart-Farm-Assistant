@@ -1,17 +1,7 @@
 """
 SQLAlchemy models for crop planning and irrigation system.
-Production-ready version.
-"""SQLAlchemy models for crop planning and irrigation.
-
-MERGE NOTE: This file includes Chat History models (Conversation, Message) 
-at the end which are NOT in the GitHub repository. These are local enhancements
-that enable persistent conversation tracking. They are OPTIONAL and additive only.
-
-Enhanced models (lines 130-155):
-- Conversation: Store chat metadata
-- Message: Store individual chat messages
-
-These models are backward compatible and won't break existing functionality.
+Production-ready version. Includes Chat History models (Conversation, Message)
+for persistent conversation tracking.
 """
 
 import uuid
@@ -26,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -51,6 +42,11 @@ class User(Base):
     google_id = Column(String(255), unique=True, nullable=True)
 
     is_active = Column(Boolean, default=True)
+
+    # Farm profile fields
+    land_owned_acres = Column(Float, nullable=True)
+    land_in_use_acres = Column(Float, nullable=True)
+    revenue = Column(Float, nullable=True)
 
     created_at = Column(DateTime(timezone=True),
                         server_default=func.now())
@@ -182,25 +178,8 @@ class IrrigationLog(Base):
 class WeatherLog(Base):
     __tablename__ = "weather_logs"
 
-    id = Column(String(36),
-                primary_key=True,
-                default=lambda: str(uuid.uuid4()))
-
-    crop_plan_id = Column(
-        String(36),
-        ForeignKey("crop_plans.id", ondelete="SET NULL")
-    )
-
-    temp = Column(Float)
-    humidity = Column(Float)
-    rain = Column(Float)
-
-    created_at = Column(DateTime(timezone=True),
-                        server_default=func.now())
-
-    crop_plan = relationship("CropPlan")
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    crop_plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="SET NULL"), index=True, nullable=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    crop_plan_id = Column(String(36), ForeignKey("crop_plans.id", ondelete="SET NULL"), index=True, nullable=True)
     weather_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     temp = Column(Float, nullable=True)
     humidity = Column(Float, nullable=True)
@@ -209,7 +188,7 @@ class WeatherLog(Base):
     raw_payload = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    crop_plan = relationship("CropPlan", back_populates="weather_logs")
+    crop_plan = relationship("CropPlan", backref="weather_logs")
 
 
 class Conversation(Base):

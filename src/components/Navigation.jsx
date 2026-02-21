@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Leaf, LogOut, ChevronDown } from 'lucide-react';
+import { Leaf, LogOut, ChevronDown, UserCog } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import '../styles/Navigation.css';
 
 function Navigation() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const { isAuthenticated, user, logout, setShowAuthModal } = useAuth();
+  const { isAuthenticated, user, logout, setShowAuthModal, setShowEditProfile } = useAuth();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -98,6 +98,13 @@ function Navigation() {
                   <div className="nav-user-info">
                     <p className="nav-user-email">{user.email}</p>
                   </div>
+                  <button
+                    className="nav-edit-profile-button"
+                    onClick={() => { setShowEditProfile(true); setShowUserMenu(false); }}
+                  >
+                    <UserCog size={16} />
+                    Edit Profile
+                  </button>
                   <button
                     className="nav-logout-button"
                     onClick={handleLogout}

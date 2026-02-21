@@ -12,7 +12,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://meet:meet@localhost:5432/smart_irrigation"
+    "postgresql+psycopg2://postgres:Parth%402006@localhost:5432/smart_irrigation"
 )
 
 print(
@@ -80,5 +80,22 @@ def get_db():
 import models   # ⭐ REQUIRED
 
 Base.metadata.create_all(bind=engine)
+
+# Add new columns to existing tables (safe to run on every startup)
+with engine.connect() as conn:
+    for col, col_type in [
+        ("land_owned_acres", "FLOAT"),
+        ("land_in_use_acres", "FLOAT"),
+        ("revenue", "FLOAT"),
+    ]:
+        try:
+            conn.execute(
+                __import__('sqlalchemy').text(
+                    f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                )
+            )
+        except Exception:
+            pass
+    conn.commit()
 
 print("✅ Tables created / verified")

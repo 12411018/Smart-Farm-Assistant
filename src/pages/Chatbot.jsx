@@ -12,43 +12,54 @@
  * These enhancements are backward compatible with GitHub version.
  * Keep this version during merge - it's superior.
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Bot, CloudSun, Droplets, Leaf, LineChart, Mic, Send, Volume2 } from 'lucide-react';
-import ChatHistory from '../components/ChatHistory'; // NEW: Not in GitHub version
+import ChatHistory from '../components/ChatHistory';
+import { useAuth } from '../context/AuthContext';
 import '../styles/Chatbot.css';
 
-// NEW FEATURE: Get or create a unique user ID that persists across sessions
-function getUserId() {
-  let userId = localStorage.getItem('smart_farm_user_id');
-  if (!userId) {
-    // Generate a unique ID: timestamp + random string
-    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('smart_farm_user_id', userId);
-    console.log('Created new user ID:', userId);
-  } else {
-    console.log('Retrieved existing user ID:', userId);
+// Fallback guest ID persisted in localStorage for unauthenticated users
+function getGuestId() {
+  let guestId = localStorage.getItem('smart_farm_guest_id');
+  if (!guestId) {
+    guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('smart_farm_guest_id', guestId);
   }
-  return userId;
+  return guestId;
 }
 
 function Chatbot() {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      text: 'Hello! I am your Smart Farming Assistant. How can I help you today?',
-      sender: 'bot',
-      timestamp: new Date(),
-    },
-  ]);
+  const { user, isAuthenticated } = useAuth();
+
+  // Use the authenticated user's DB id, or a persistent guest id as fallback
+  const userId = useMemo(
+    () => (isAuthenticated && user?.id ? user.id : getGuestId()),
+    [isAuthenticated, user?.id]
+  );
+
+  const WELCOME_MESSAGE = {
+    id: 1,
+    text: 'Hello! I am your Smart Farming Assistant. How can I help you today?',
+    sender: 'bot',
+    timestamp: new Date(),
+  };
+
+  const [messages, setMessages] = useState([WELCOME_MESSAGE]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [hasVoiceSupport, setHasVoiceSupport] = useState(true);
   const [currentConversationId, setCurrentConversationId] = useState(null);
-  const [userId] = useState(getUserId()); // Persistent user ID from localStorage
-  const [refreshHistory, setRefreshHistory] = useState(0);
+  const [refreshHistory, setRefreshHistory] = useState(0);  
+
+  // Reset conversation when user logs in or out
+  useEffect(() => {
+    setMessages([WELCOME_MESSAGE]);
+    setCurrentConversationId(null);
+    setRefreshHistory(prev => prev + 1);
+  }, [userId]);
   const chatContainerRef = useRef(null);
   const recognitionRef = useRef(null);
   const isManualStopRef = useRef(false);
@@ -249,15 +260,7 @@ function Chatbot() {
   };
 
   const handleNewConversation = (conversationId) => {
-    // Reset to welcome message
-    setMessages([
-      {
-        id: 1,
-        text: 'Hello! I am your Smart Farming Assistant. How can I help you today?',
-        sender: 'bot',
-        timestamp: new Date(),
-      },
-    ]);
+    setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
     setCurrentConversationId(conversationId);
   };
 

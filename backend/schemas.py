@@ -48,6 +48,9 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_active: bool
+    land_owned_acres: Optional[float] = None
+    land_in_use_acres: Optional[float] = None
+    revenue: Optional[float] = None
 
 # Chat History Schemas
 class MessageResponse(BaseModel):
@@ -99,3 +102,10 @@ class ConversationDetailResponse(BaseModel):
 class CreateConversationRequest(BaseModel):
     user_id: str = "default_user"
     title: Optional[str] = "New Conversation"
+
+
+class UpdateProfileRequest(BaseModel):
+    username: Optional[str] = None
+    land_owned_acres: Optional[float] = None
+    land_in_use_acres: Optional[float] = None
+    revenue: Optional[float] = None
