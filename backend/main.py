@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from vectorstore.search import RAGSearch, build_context_text
+# RAG/vectorstore is optional; import lazily below to avoid startup errors when
+# optional dependencies (faiss, sentence-transformers) are not installed.
+RAGSearch = None
+build_context_text = lambda chunks: ""
 from weather_engine.weather_service import fetch_weather_data
 from weather_engine.weather_rules import build_weather_rules
 from weather_engine.weather_ai import generate_weather_advice
@@ -89,7 +92,19 @@ app.add_middleware(
 )
 
 
-rag_search = RAGSearch()
+try:
+    from vectorstore.search import RAGSearch as _RAGSearch, build_context_text as _build_context_text
+    rag_search = _RAGSearch()
+    build_context_text = _build_context_text
+except Exception as exc:  # Fail gracefully when RAG/vectorstore deps are missing
+    print(f"[WARNING] RAGSearch initialization failed: {exc}")
+
+    class _DummyRAG:
+        def retrieve_context(self, *args, **kwargs):
+            return []
+
+    rag_search = _DummyRAG()
+    build_context_text = lambda chunks: ""
 chat_history = []
 
 

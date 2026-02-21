@@ -7,7 +7,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Default to provided local connection string; allow override via env
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://postgres:NIKKKHIL001@localhost:5432/smart_irrigation",
+    # Default fallback uses the project DB name and the password provided by the user.
+    # Note: '@' in passwords must be URL-encoded as '%40'.
+    "postgresql+psycopg2://postgres:purva%402006@localhost:5432/smart_irrigation",
 )
 
 engine = create_engine(DATABASE_URL, future=True, echo=False)

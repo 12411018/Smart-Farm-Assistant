@@ -115,8 +115,6 @@ function Chatbot() {
 
       // Call FastAPI backend (match current host, port 8000)
       const backendUrl = `${window.location.protocol}//${window.location.hostname}:8000/chat`;
-      console.log('Sending request to:', backendUrl);
-      console.log('Message:', inputValue);
       
       const response = await fetch(backendUrl, {
         method: 'POST',
@@ -128,8 +126,6 @@ function Chatbot() {
           context: context,
         }),
       });
-
-      console.log('Response status:', response.status);
       
       if (!response.ok) {
         console.error('Backend returned error:', response.status, response.statusText);
@@ -137,7 +133,6 @@ function Chatbot() {
       }
 
       const data = await response.json();
-      console.log('Backend response:', data);
 
       const botMessage = {
         id: messages.length + 2,

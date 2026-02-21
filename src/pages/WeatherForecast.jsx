@@ -63,7 +63,7 @@ function WeatherForecast() {
         const cleaned = (data.ai_advice || '').replace(/\*\*/g, '').trim();
         setAiAdvice(cleaned);
       } catch (err) {
-        console.error(err);
+        console.error('Weather alert error:', 'Weather forecast error:', err);
       } finally {
         setAiLoading(false);
       }
