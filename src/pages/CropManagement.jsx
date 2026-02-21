@@ -5,6 +5,8 @@ import CropCard from '../components/CropCard';
 import { useCropContext } from '../context/CropContext';
 import { getLocationWithFallback } from '../utils/locationService';
 import { getWeatherData } from '../services/weatherService';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
 import '../styles/CropManagement.css';
 
 function CropManagement() {
@@ -27,7 +29,7 @@ function CropManagement() {
     const fetchPlans = async () => {
       try {
         const response = await fetch(
-          'http://127.0.0.1:8000/crop-plan/user/demo_user'
+          `${API_BASE}/crop-plan/user/demo_user`
         );
         const data = await response.json();
         setPlans(data.plans);
@@ -89,7 +91,7 @@ function CropManagement() {
     const confirmed = window.confirm(`Delete crop plan for ${plan.cropName}?`);
     if (!confirmed) return;
 
-    const response = await fetch(`http://127.0.0.1:8000/crop-plan/${plan.id}`, { method: 'DELETE' });
+    const response = await fetch(`${API_BASE}/crop-plan/${plan.id}`, { method: 'DELETE' });
     if (response.ok) {
       removePlan(plan.id);
     }

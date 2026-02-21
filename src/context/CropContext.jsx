@@ -2,9 +2,10 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 const CropContext = createContext(null);
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
 const CROP_USER_ID = 'demo_user';
-const PLANS_ENDPOINT = `http://127.0.0.1:8000/crop-plan/user/${CROP_USER_ID}`;
-const PLAN_DETAILS_ENDPOINT = (planId) => `http://127.0.0.1:8000/crop-plan/${planId}`;
+const PLANS_ENDPOINT = `${API_BASE}/crop-plan/user/${CROP_USER_ID}`;
+const PLAN_DETAILS_ENDPOINT = (planId) => `${API_BASE}/crop-plan/${planId}`;
 
 const getStoredPlanId = () => {
   try {

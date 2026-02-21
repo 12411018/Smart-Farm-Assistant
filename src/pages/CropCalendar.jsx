@@ -73,19 +73,21 @@ function CropCalendar() {
 
   const planData = selectedPlanDetails;
 
+const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
   const getStageForDate = (date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = toYMD(date);
     return calendarData.stages.find((stage) => {
-      const start = new Date(stage.start_date).toISOString().split('T')[0];
-      const end = new Date(stage.end_date).toISOString().split('T')[0];
+      const start = (stage.start_date || '').split('T')[0];
+      const end = (stage.end_date || '').split('T')[0];
       return dateStr >= start && dateStr <= end;
     });
   };
 
   const getIrrigationForDate = (date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = toYMD(date);
     return calendarData.irrigation.find((irr) => {
-      const irrDate = new Date(irr.date).toISOString().split('T')[0];
+      const irrDate = (irr.date || '').split('T')[0];
       return irrDate === dateStr;
     });
   };
@@ -109,7 +111,7 @@ function CropCalendar() {
       const date = new Date(today);
       date.setDate(today.getDate() + index);
       if (day.rainChance > 60) {
-        alerts.add(date.toISOString().split('T')[0]);
+        alerts.add(toYMD(date));
       }
     });
 
@@ -127,7 +129,7 @@ function CropCalendar() {
     const classes = [];
     const stage = getStageForDate(date);
     const irrigation = getIrrigationForDate(date);
-    const tileDate = date.toISOString().split('T')[0];
+    const tileDate = toYMD(date);
 
     if (stage) {
       const stageName = stage.name.toLowerCase().replace(/\s+/g, '-');

@@ -37,7 +37,7 @@ def calculate_total_duration(crop_name):
     return sum(stage["duration_days"] for stage in CROP_STAGES[crop_name])
 
 
-def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, irrigation_method, stages):
+def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, irrigation_method, stages, soil_type=None):
     """Generate complete irrigation schedule."""
     if crop_name not in WATER_REQUIREMENTS:
         return []
@@ -50,7 +50,7 @@ def generate_irrigation_schedule(crop_name, sowing_date_str, land_size_acres, ir
 
         current_date = stage_start
         while current_date <= stage_end:
-            water_amount = calculate_water_liters(stage["stage"], land_size_acres)
+            water_amount = calculate_water_liters(stage["stage"], land_size_acres, soil_type)
             
             schedule.append({
                 "date": current_date.isoformat(),

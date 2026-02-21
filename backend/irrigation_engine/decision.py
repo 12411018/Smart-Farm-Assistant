@@ -25,16 +25,28 @@ def _stage_for_date(stages: Iterable[CropStage], day: datetime) -> Optional[Crop
     return None
 
 
-def generate_irrigation_schedule(db: Session, plan, stages: List[CropStage], weather_current: Optional[dict] = None, moisture_value: Optional[float] = None, days: int = 7) -> List[IrrigationSchedule]:
-    """Generate and persist the next `days` irrigation entries starting today.
+def generate_irrigation_schedule(
+    db: Session,
+    plan,
+    stages: List[CropStage],
+    weather_current: Optional[dict] = None,
+    moisture_value: Optional[float] = None,
+    days: int = 7,
+    start_date: Optional[date] = None,
+) -> List[IrrigationSchedule]:
+    """Generate and persist the next `days` irrigation entries starting at `start_date` (default today).
     Replaces future pending entries to keep table clean.
     """
-    today_dt = datetime.now(timezone.utc)
+    start_day = start_date or date.today()
+    start_dt = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
     # Remove future pending entries to avoid duplicates
-    (db.query(IrrigationSchedule)
+    (
+        db.query(IrrigationSchedule)
         .filter(IrrigationSchedule.crop_plan_id == plan.id)
-        .filter(IrrigationSchedule.date >= today_dt)
-        .delete(synchronize_session=False))
+        .filter(IrrigationSchedule.date >= start_dt)
+        .filter(IrrigationSchedule.status == "pending")
+        .delete(synchronize_session=False)
+    )
 
     # If it is already wet (rainy or high soil moisture), skip today's irrigation and push watering to tomorrow.
     rain_chance = 0
@@ -42,14 +54,14 @@ def generate_irrigation_schedule(db: Session, plan, stages: List[CropStage], wea
     if weather_current:
         rain_chance = weather_current.get("rain_chance") or weather_current.get("rainChance") or 0
         rain_amount = weather_current.get("rain") or 0
-    wet_today = (rain_chance >= 60) or (rain_amount >= 5) or (moisture_value is not None and moisture_value >= 0.8)
+    wet_today = (rain_chance >= 60) or (rain_amount >= 5)
 
     new_rows = []
     for offset in range(days):
-        day_dt = today_dt + timedelta(days=offset)
+        day_dt = start_day + timedelta(days=offset)
         stage_row = _stage_for_date(stages, day_dt)
         stage_name = stage_row.stage if stage_row else plan.irrigation_method or "General"
-        water_liters = compute_water_liters(plan.crop_name, plan.soil_type, plan.land_size_acres, weather_current, moisture_value)
+        water_liters = compute_water_liters(plan.crop_name, plan.soil_type, plan.land_size_acres, weather_current, None)
 
         status = "pending"
         auto_adjusted = False
@@ -68,12 +80,15 @@ def generate_irrigation_schedule(db: Session, plan, stages: List[CropStage], wea
 
         row = IrrigationSchedule(
             crop_plan_id=plan.id,
-            date=day_dt,
+            date=datetime.combine(day_dt, datetime.min.time(), tzinfo=timezone.utc),
             stage=stage_name,
             water_amount_liters=round(water_liters),
             method=plan.irrigation_method,
             status=status,
             auto_adjusted=auto_adjusted,
+            actual_liters=0,
+            weather_adjustment_percent=0,
+            executed_at=None,
         )
         new_rows.append(row)
 

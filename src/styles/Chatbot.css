@@ -166,6 +166,12 @@
   transform: translateY(-1px);
 }
 
+.icon-btn.listening {
+  background: rgba(255, 102, 0, 0.16);
+  color: #ff5c00;
+  box-shadow: 0 0 0 3px rgba(255, 102, 0, 0.12);
+}
+
 .send-btn {
   padding: 0.6rem 1.2rem;
   background: linear-gradient(135deg, var(--primary), var(--primary-olive));

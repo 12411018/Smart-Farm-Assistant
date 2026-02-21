@@ -14,7 +14,10 @@ function Chatbot() {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [hasVoiceSupport, setHasVoiceSupport] = useState(true);
   const chatContainerRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     if (!chatContainerRef.current) return;
@@ -24,6 +27,64 @@ function Chatbot() {
     });
     return () => cancelAnimationFrame(id);
   }, [messages, isLoading]);
+
+  // Set up browser speech recognition once (Web Speech API).
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition || window.mozSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setHasVoiceSupport(false);
+      return undefined;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = (event) => {
+      console.error('Voice input error:', event.error);
+      setIsListening(false);
+    };
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+      if (!finalTranscript) return;
+      // Only append final results to avoid duplicate interim text.
+      setInputValue((prev) => `${prev} ${finalTranscript}`.trim());
+    };
+
+    recognitionRef.current = recognition;
+    setHasVoiceSupport(true);
+
+    return () => {
+      recognition.stop();
+    };
+  }, []);
+
+  const handleToggleMic = () => {
+    if (!hasVoiceSupport) return;
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+
+    if (isListening) {
+      recognition.stop();
+    } else {
+      try {
+        recognition.start();
+      } catch (err) {
+        console.error('Failed to start voice input:', err);
+      }
+    }
+  };
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -52,8 +113,8 @@ function Chatbot() {
 🌧️ Rainfall Status: No rain expected in next 24 hours
 💰 Budget: Medium-scale farm`;
 
-      // Call FastAPI backend
-      const backendUrl = 'http://127.0.0.1:8000/chat';
+      // Call FastAPI backend (match current host, port 8000)
+      const backendUrl = `${window.location.protocol}//${window.location.hostname}:8000/chat`;
       console.log('Sending request to:', backendUrl);
       console.log('Message:', inputValue);
       
@@ -147,8 +208,10 @@ function Chatbot() {
             <div className="input-wrapper">
               <button
                 type="button"
-                className="icon-btn"
-                title="Voice input (UI only)"
+                className={`icon-btn ${isListening ? 'listening' : ''}`}
+                title={hasVoiceSupport ? 'Start voice input' : 'Voice input not supported'}
+                onClick={handleToggleMic}
+                disabled={!hasVoiceSupport || isLoading}
               >
                 <Mic size={18} />
               </button>

@@ -33,7 +33,7 @@ function Navigation() {
           </li>
           <li className="nav-item">
             <NavLink to="/yield" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              Yield Input
+              Irrigation Planning
             </NavLink>
           </li>
           <li className="nav-item">
@@ -48,7 +48,7 @@ function Navigation() {
           </li>
           <li className="nav-item">
             <NavLink to="/irrigation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              Irrigation
+              Irrigation Status
             </NavLink>
           </li>
           <li className="nav-item">

@@ -1,7 +1,7 @@
 """SQLAlchemy models for crop planning and irrigation."""
 
 import uuid
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -76,6 +76,9 @@ class IrrigationSchedule(Base):
     method = Column(String, nullable=False)
     status = Column(String, default="pending", nullable=False)
     auto_adjusted = Column(Boolean, default=False, nullable=False)
+    actual_liters = Column(Integer, nullable=True, default=0)
+    weather_adjustment_percent = Column(Float, nullable=True, default=0)
+    executed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     crop_plan = relationship("CropPlan", back_populates="irrigation_schedule")
@@ -84,12 +87,17 @@ class IrrigationSchedule(Base):
 class IrrigationLog(Base):
     __tablename__ = "irrigation_logs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     crop_plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="CASCADE"), index=True, nullable=False)
-    date = Column(DateTime(timezone=True), nullable=False)
-    original_amount = Column(Integer, nullable=False)
-    adjusted_amount = Column(Integer, nullable=False)
+    irrigation_date = Column(Date, nullable=False)
+    original_amount = Column(Float, nullable=False)
+    adjusted_amount = Column(Float, nullable=False)
     weather_adjustment = Column(Text, nullable=True)
+    weather_adjustment_percent = Column(Float, nullable=True, default=0)
+    planned_liters = Column(Float, nullable=False, default=0)
+    actual_liters = Column(Float, nullable=False, default=0)
+    duration_seconds = Column(Integer, nullable=True, default=0)
+    status = Column(String, nullable=False, default="completed")
     auto_triggered = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

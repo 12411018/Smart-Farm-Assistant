@@ -8,8 +8,10 @@ BASE_WATER_REQUIREMENTS = {
 }
 
 SOIL_IMPACT = {
-    "black": 0.90,   # retains water, reduce 10%
-    "sandy": 1.15,   # drains fast, increase 15%
+    "sandy": 1.20,
+    "loamy": 1.00,
+    "clay": 0.80,
+    "black": 0.90,
 }
 
 
@@ -22,7 +24,7 @@ def base_water_mm(crop_name: str) -> float:
 
 
 def soil_factor(soil_type: Optional[str]) -> float:
-    key = _normalize_soil(soil_type)
+    key = _normalize_soil(soil_type) 
     return SOIL_IMPACT.get(key, 1.0)
 
 
@@ -30,27 +32,24 @@ def weather_factor(weather: Optional[dict]) -> float:
     if not weather:
         return 1.0
     factor = 1.0
-    rain = weather.get("rain_chance") or weather.get("rainChance") or 0
+    rain_amount = weather.get("rain") or 0
     temp = weather.get("temp") or weather.get("temperature") or 0
     humidity = weather.get("humidity") or 0
+    wind = weather.get("wind") or weather.get("windSpeed") or 0
 
-    if rain > 60:
-        factor *= 0.70  # reduce 30%
+    if rain_amount >= 5:
+        return 0.0
     if temp > 35:
-        factor *= 1.15  # increase 15%
-    if humidity < 25:
-        factor *= 1.10  # increase 10%
+        factor *= 1.15
+    if humidity < 30:
+        factor *= 1.10
+    if wind > 5:
+        factor *= 1.05
     return factor
 
 
 def adjust_by_moisture(sensor_value: Optional[float], threshold: float = 0.35) -> float:
-    """Placeholder for future Arduino moisture input. Returns multiplicative factor."""
-    if sensor_value is None:
-        return 1.0
-    if sensor_value < threshold:
-        return 1.20  # increase irrigation
-    if sensor_value > 0.80:
-        return 0.0   # skip if very wet
+    """Ignore soil moisture for demo; rely solely on weather API."""
     return 1.0
 
 

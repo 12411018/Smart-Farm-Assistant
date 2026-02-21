@@ -23,7 +23,7 @@ class RAGSearch:
         else:
             self.vectorstore.load()
 
-    def retrieve_context(self, query: str, top_k: int = 5) -> List[str]:
+    def retrieve_context(self, query: str, top_k: int = 8) -> List[str]:
         results = self.vectorstore.query(query, top_k=top_k)
         return [r["metadata"].get("text", "") for r in results if r.get("metadata")]
 

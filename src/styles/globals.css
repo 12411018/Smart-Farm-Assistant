@@ -107,24 +107,26 @@ p {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-olive) 100%);
-  color: #f4fbf4;
-  box-shadow: var(--shadow-soft);
+  background: linear-gradient(135deg, #1c8f54 0%, #34c38f 100%);
+  color: #f7fff9;
+  box-shadow: 0 12px 30px rgba(28, 143, 84, 0.28);
+  border-color: rgba(52, 195, 143, 0.6);
 }
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: var(--shadow-strong);
+  box-shadow: 0 16px 40px rgba(28, 143, 84, 0.32);
 }
 
 .btn-secondary {
-  background: transparent;
-  color: var(--primary);
-  border-color: rgba(31, 77, 58, 0.3);
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f4d3a;
+  border-color: rgba(31, 77, 58, 0.22);
 }
 
 .btn-secondary:hover {
-  background: rgba(31, 77, 58, 0.08);
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 12px 28px rgba(31, 77, 58, 0.15);
   transform: translateY(-2px);
 }
 

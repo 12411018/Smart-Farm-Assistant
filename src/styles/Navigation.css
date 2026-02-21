@@ -19,9 +19,9 @@
   margin: 0 auto;
   padding: 0 2rem;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  height: 72px;
+  justify-content: space-between;
+  height: 70px;
 }
 
 .nav-logo {
@@ -32,6 +32,11 @@
   align-items: center;
   gap: 0.75rem;
   letter-spacing: 0.2px;
+  text-decoration: none;
+}
+
+.brand-name {
+  white-space: nowrap;
 }
 
 .logo-icon {

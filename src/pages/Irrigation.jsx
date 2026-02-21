@@ -7,10 +7,12 @@ import IrrigationLogs from '../components/IrrigationLogs';
 import { useCropContext } from '../context/CropContext';
 import { getLocationWithFallback } from '../utils/locationService';
 import { getWeatherData } from '../services/weatherService';
+import useIrrigationData from '../hooks/useIrrigationData';
 import '../styles/Irrigation.css';
 
 function Irrigation() {
   const { selectedPlan, selectedPlanId, selectedPlanDetails, ensurePlanDetails } = useCropContext();
+  const { data: irrigationData } = useIrrigationData();
   const [weather, setWeather] = useState(null);
   const [insight, setInsight] = useState(null);
   const [upcomingSchedule, setUpcomingSchedule] = useState([]);
@@ -25,7 +27,10 @@ function Irrigation() {
     const loadSchedule = async () => {
       if (!selectedPlanId) return;
       try {
-        const response = await fetch(`http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}`);
+        // Get soil moisture from sensor (dashboard)
+        const soilMoisture = Number(irrigationData?.soilRaw ?? null);
+        const url = soilMoisture ? `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}?moisture=${soilMoisture}` : `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}`;
+        const response = await fetch(url);
         if (response.ok) {
           const data = await response.json();
           setUpcomingSchedule(data);
@@ -36,7 +41,7 @@ function Irrigation() {
     };
 
     loadSchedule();
-  }, [selectedPlanId]);
+  }, [selectedPlanId, irrigationData]);
 
   useEffect(() => {
     const loadWeather = async () => {
@@ -95,7 +100,8 @@ function Irrigation() {
   const nextSevenDays = useMemo(() => {
     if (!upcomingSchedule.length) return [];
     return upcomingSchedule.map((item) => {
-      const dateLabel = new Date(item.date).toLocaleDateString();
+      const dateStr = (item.date || '').split('T')[0] || item.date;
+      const dateLabel = new Date(dateStr).toLocaleDateString();
       const weatherAdj = item.autoAdjusted ? 'Weather adjusted' : weather?.rainChance > 60 ? 'Rain risk' : 'Normal';
       const status = item.status || 'Pending';
       return {

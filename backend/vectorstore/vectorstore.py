@@ -56,7 +56,7 @@ class FaissVectorStore:
             self.metadata = pickle.load(f)
         print(f"[INFO] Loaded Faiss index and metadata from {self.persist_dir}")
 
-    def search(self, query_embedding: np.ndarray, top_k: int = 5):
+    def search(self, query_embedding: np.ndarray, top_k: int = 8):
         D, I = self.index.search(query_embedding, top_k)
         results = []
         for idx, dist in zip(I[0], D[0]):
@@ -64,7 +64,7 @@ class FaissVectorStore:
             results.append({"index": idx, "distance": dist, "metadata": meta})
         return results
 
-    def query(self, query_text: str, top_k: int = 5):
+    def query(self, query_text: str, top_k: int = 8):
         print(f"[INFO] Querying vector store for: '{query_text}'")
         if self.index is None:
             print("[WARNING] Vector index is empty. Returning no results.")

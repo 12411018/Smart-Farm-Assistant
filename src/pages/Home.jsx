@@ -6,13 +6,6 @@ import '../styles/Home.css';
 function Home() {
   const cards = [
     {
-      id: 1,
-      title: 'Yield Intelligence',
-      description: 'Capture crop performance and track profitability in one place.',
-      Icon: LineChart,
-      link: '/yield',
-    },
-    {
       id: 2,
       title: 'Smart Irrigation Planning',
       description: 'Schedule water precisely with stage-aware recommendations.',
@@ -72,37 +65,6 @@ function Home() {
                 <div>
                   <h3>120+</h3>
                   <p>Active field sensors</p>
-                </div>
-              </div>
-            </div>
-            <div className="hero-panel">
-              <div className="card hero-card glass-card">
-                <div className="hero-card-header">
-                  <span className="icon-badge">
-                    <LineChart size={20} />
-                  </span>
-                  <div>
-                    <p className="card-eyebrow">This week</p>
-                    <h3>Farm Performance</h3>
-                  </div>
-                </div>
-                <div className="hero-card-metrics">
-                  <div>
-                    <p>Soil moisture</p>
-                    <strong>45% steady</strong>
-                  </div>
-                  <div>
-                    <p>Crop health</p>
-                    <strong>High vigor</strong>
-                  </div>
-                  <div>
-                    <p>Irrigation cost</p>
-                    <strong>-12% vs target</strong>
-                  </div>
-                </div>
-                <div className="hero-card-footer">
-                  <span>Updated 12 min ago</span>
-                  <Link to="/dashboard">Open analytics</Link>
                 </div>
               </div>
             </div>

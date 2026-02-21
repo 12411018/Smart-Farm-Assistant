@@ -21,7 +21,8 @@ def _parse_iso(dt_str: str) -> datetime:
 
 
 def _to_iso(dt_obj: datetime) -> str:
-    return dt_obj.isoformat()
+    # Use date-only to avoid timezone shifts in UI
+    return dt_obj.date().isoformat() if isinstance(dt_obj, datetime) else str(dt_obj)
 
 
 def serialize_stage(stage: CropStage) -> Dict:
@@ -45,6 +46,9 @@ def serialize_schedule(item: IrrigationSchedule) -> Dict:
         "method": item.method,
         "status": item.status,
         "autoAdjusted": item.auto_adjusted,
+        "actualLiters": item.actual_liters,
+        "weatherAdjustmentPercent": item.weather_adjustment_percent,
+        "executedAt": _to_iso(item.executed_at) if item.executed_at else None,
     }
 
 
@@ -77,6 +81,7 @@ def create_crop_plan(db: Session, payload: Dict) -> Tuple[Dict, List[Dict], List
         payload["landSizeAcres"],
         payload["irrigationMethod"],
         stages_data,
+        payload.get("soilType"),
     )
 
     plan = CropPlan(
@@ -117,6 +122,9 @@ def create_crop_plan(db: Session, payload: Dict) -> Tuple[Dict, List[Dict], List
             water_amount_liters=item["waterAmountLiters"],
             method=item["method"],
             status=item.get("status", "pending"),
+            actual_liters=item.get("actualLiters") or 0,
+            weather_adjustment_percent=item.get("weatherAdjustmentPercent") or 0,
+            executed_at=None,
         )
         schedule_rows.append(row)
     db.add_all(schedule_rows)
@@ -194,14 +202,20 @@ def adjust_schedule_for_weather(db: Session, crop_plan_id: str, weather_current:
         original = item.water_amount_liters
         item.water_amount_liters = adjusted_amount
         item.auto_adjusted = True
+        item.weather_adjustment_percent = round(((adjusted_amount - original) / original) * 100, 2) if original else 0
 
         log_entry = IrrigationLog(
             crop_plan_id=plan_uuid,
-            date=item.date,
+            irrigation_date=_as_date(item.date),
             original_amount=original,
             adjusted_amount=adjusted_amount,
             weather_adjustment=reason,
             auto_triggered=True,
+            planned_liters=original,
+            actual_liters=adjusted_amount,
+            duration_seconds=0,
+            status="adjusted",
+            weather_adjustment_percent=item.weather_adjustment_percent,
         )
         db.add(log_entry)
         adjustments.append(
@@ -217,12 +231,12 @@ def adjust_schedule_for_weather(db: Session, crop_plan_id: str, weather_current:
     return adjustments
 
 
-def fetch_irrigation_logs(db: Session, crop_plan_id: str, limit: int = 20) -> List[IrrigationLog]:
+def fetch_irrigation_logs(db: Session, crop_plan_id: str, limit: int = 100) -> List[IrrigationLog]:
     plan_uuid = uuid.UUID(crop_plan_id)
     return (
         db.query(IrrigationLog)
         .filter(IrrigationLog.crop_plan_id == plan_uuid)
-        .order_by(IrrigationLog.created_at.desc())
+        .order_by(IrrigationLog.irrigation_date.desc(), IrrigationLog.created_at.desc())
         .limit(limit)
         .all()
     )

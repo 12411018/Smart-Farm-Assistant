@@ -1,7 +1,7 @@
 import os
 import uuid
 import requests
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +18,7 @@ from crop_engine.crop_insights import generate_crop_insight
 from firebase_config import get_firestore, is_firebase_enabled
 from logging_service import log_yield_input, log_plan_created, log_plan_deleted, log_irrigation_adjustment, get_all_logs
 from database import get_db
-from models import CropStage, IrrigationSchedule, CropPlan
+from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan
 from services.crop_status_engine import calculate_crop_status
 from irrigation_engine.decision import generate_irrigation_schedule
 from services.crop_service import (
@@ -34,8 +34,9 @@ from services.crop_service import (
 )
 from schemas import ChatRequest, WeatherRequest, CropPlanRequest
 
-OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "mistral:latest"
+OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+# Default to mistral:latest since it is installed locally; override via OLLAMA_MODEL env when needed.
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral:latest")
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -56,6 +57,7 @@ Answer style rules:
 - Start with the MOST IMPORTANT point
 - Explain WHY briefly
 - Never exceed 8 lines unless the question is complex
+- If you have retrieved context, answer strictly from that relevant context and ignore any noisy or unrelated text
 
 Location handling:
 - If user mentions a location, use it
@@ -75,15 +77,12 @@ Farmers should feel:
 """.strip()
 
 app = FastAPI(title="Smart Farming Assistant API")
+    
+        # Cache last exchanges for lightweight history; if model is unavailable, return the generated reply above.
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,6 +99,79 @@ def _as_date(value):
     if isinstance(value, date):
         return value
     return None
+
+
+def _start_of_day(dt: datetime) -> datetime:
+    return datetime.combine(dt.date(), datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _compute_weather_adjustment(weather: dict | None):
+    """Return (factor, reason, should_skip)."""
+    if not weather:
+        return 1.0, "No weather data", False
+
+    rain_amount = weather.get("rain") or 0
+    rain_chance = weather.get("rain_chance") or weather.get("rainChance") or 0
+    temp = weather.get("temp") or weather.get("temperature") or 0
+    humidity = weather.get("humidity") or 0
+    wind = weather.get("wind") or weather.get("windSpeed") or 0
+
+    # Skip when both amount and probability are strong.
+    if rain_amount >= 5 and rain_chance >= 70:
+        return 0.0, f"Skip: rain {rain_amount}mm @ {rain_chance}%", True
+
+    factor = 1.0
+    reasons = []
+
+    # Reduce slightly in cool + very humid conditions
+    if humidity > 85 and temp < 25:
+        factor *= 0.8
+        reasons.append("Reduce 20%: humid>85% & temp<25C")
+
+    if temp > 35:
+        factor *= 1.15
+        reasons.append("Increase 15%: temp>35C")
+    if humidity < 30:
+        factor *= 1.10
+        reasons.append("Increase 10%: humidity<30%")
+    if wind > 5:
+        factor *= 1.05
+        reasons.append("Increase 5%: wind>5 m/s")
+
+    return factor, "; ".join(reasons) if reasons else "No adjustment", False
+
+
+def _mark_missed_irrigations(db: Session):
+    """Mark past-due pending irrigations as missed and log them."""
+    start_today = _start_of_day(datetime.now(timezone.utc))
+    missed = (
+        db.query(IrrigationSchedule)
+        .filter(IrrigationSchedule.status == "pending")
+        .filter(IrrigationSchedule.date < start_today)
+        .all()
+    )
+
+    for entry in missed:
+        entry.status = "missed"
+        entry.actual_liters = entry.actual_liters or 0
+        entry.executed_at = entry.executed_at or datetime.now(timezone.utc)
+        log_row = IrrigationLog(
+            crop_plan_id=entry.crop_plan_id,
+            irrigation_date=_as_date(entry.date),
+            original_amount=entry.water_amount_liters,
+            adjusted_amount=entry.water_amount_liters,
+            weather_adjustment="Marked missed",
+            auto_triggered=True,
+            planned_liters=entry.water_amount_liters,
+            actual_liters=0,
+            duration_seconds=0,
+            status="missed",
+            weather_adjustment_percent=entry.weather_adjustment_percent or 0,
+        )
+        db.add(log_row)
+
+    if missed:
+        db.commit()
 
 
 def _sync_plan_to_firestore(db_client, crop_plan_id: str, plan_data: dict, stages: list, irrigation_schedule: list) -> bool:
@@ -157,7 +229,8 @@ def _build_prompt(user_message: str, context_text: str, history_text: str) -> st
 def generate_reply(user_message: str) -> str:
     """Generate reply using local Ollama Mistral model."""
     try:
-        chunks = rag_search.retrieve_context(user_message, top_k=5)
+        # Keep retrieval very small to reduce prompt size and latency.
+        chunks = rag_search.retrieve_context(user_message, top_k=2)
         context_text = build_context_text(chunks)
     except Exception:
         context_text = ""
@@ -166,10 +239,101 @@ def generate_reply(user_message: str) -> str:
 
     prompt = _build_prompt(user_message, context_text, history_text)
     headers = {"Content-Type": "application/json"}
+
+    def _invoke_model(model_name: str):
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "stream": False,
+            # Constrain generation to reduce latency and resource use.
+            "options": {
+                # Defaults tuned for <30s responses on local GPU; override via env vars if needed.
+                "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "96")),
+                "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.35")),
+                "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
+                "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "1024")),
+            },
+        }
+        try:
+            response = requests.post(
+                OLLAMA_ENDPOINT,
+                headers=headers,
+                json=payload,
+                timeout=180,
+            )
+        except requests.RequestException as exc:
+            return None, f"Model error: {exc}"
+
+        if response.status_code != 200:
+            try:
+                error_json = response.json()
+                error_message = error_json.get("error") or response.text
+            except ValueError:
+                error_message = response.text
+            return None, error_message
+
+        try:
+            data = response.json()
+        except ValueError:
+            return None, "Model error: Invalid JSON response"
+
+        generated_text = data.get("response", "") if isinstance(data, dict) else ""
+        if not generated_text:
+            return None, "Model error: Empty response from model"
+
+        return generated_text.strip(), None
+
+    primary_model = OLLAMA_MODEL
+    fallback_model = os.getenv("OLLAMA_FALLBACK_MODEL", "phi3:mini")
+
+    reply, error_message = _invoke_model(primary_model)
+
+    if error_message:
+        lowered = error_message.lower()
+        memory_or_missing = ("system memory" in lowered) or ("not enough" in lowered) or ("not found" in lowered)
+
+        if memory_or_missing and fallback_model and fallback_model != primary_model:
+            fallback_reply, fallback_error = _invoke_model(fallback_model)
+            if fallback_reply:
+                reply = f"[Using fallback model {fallback_model}] {fallback_reply}"
+                chat_history.append({"role": "user", "content": user_message})
+                chat_history.append({"role": "assistant", "content": reply})
+                return reply
+            if fallback_error:
+                error_message = fallback_error
+
+        if "not found" in lowered:
+            return (
+                "Model unavailable: Ollama cannot find the requested model. "
+                f"Pull it with 'ollama pull {primary_model}' or set OLLAMA_MODEL to an installed model."
+            )
+        if "system memory" in lowered or "not enough" in lowered:
+            return (
+                "Model unavailable: local model needs more RAM. "
+                "Set OLLAMA_MODEL to a smaller model (e.g., phi3:mini) and restart the backend."
+            )
+        return f"Model error: {error_message}"
+
+    # Cache last exchanges for lightweight history; if model is unavailable, return the generated reply above.
+    chat_history.append({"role": "user", "content": user_message})
+    chat_history.append({"role": "assistant", "content": reply})
+
+    return reply
+
+
+def generate_reply_direct(user_message: str) -> str:
+    """Fast path: call Ollama directly without RAG/history for lowest latency."""
+    headers = {"Content-Type": "application/json"}
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": prompt,
+        "prompt": user_message,
         "stream": False,
+        "options": {
+            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "96")),
+            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.35")),
+            "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
+            "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "1024")),
+        },
     }
 
     try:
@@ -184,33 +348,35 @@ def generate_reply(user_message: str) -> str:
 
     if response.status_code != 200:
         try:
-            error_json = response.json()
-            error_message = error_json.get("error") or response.text
+            err_json = response.json()
+            err_msg = err_json.get("error") or response.text
         except ValueError:
-            error_message = response.text
-        return f"Model error: {error_message}"
+            err_msg = response.text
+        return f"Model error: {err_msg}"
 
     try:
         data = response.json()
     except ValueError:
         return "Model error: Invalid JSON response"
 
-    generated_text = data.get("response", "") if isinstance(data, dict) else ""
-    if not generated_text:
+    text = data.get("response", "") if isinstance(data, dict) else ""
+    if not text:
         return "Model error: Empty response from model"
 
-    reply = generated_text.strip()
-
-    chat_history.append({"role": "user", "content": user_message})
-    chat_history.append({"role": "assistant", "content": reply})
-
-    return reply
+    return text.strip()
 
 
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Chat endpoint for agriculture advice"""
     reply = generate_reply(req.message)
+    return {"reply": reply}
+
+
+@app.post("/chat/direct")
+def chat_direct(req: ChatRequest):
+    """Chat endpoint without RAG/history for fastest local model response."""
+    reply = generate_reply_direct(req.message)
     return {"reply": reply}
 
 
@@ -469,7 +635,7 @@ def get_operation_logs():
 
 
 @app.get("/irrigation/logs/{crop_plan_id}")
-def get_irrigation_logs(crop_plan_id: str, limit: int = 20, db: Session = Depends(get_db)):
+def get_irrigation_logs(crop_plan_id: str, limit: int = 100, db: Session = Depends(get_db)):
     """Fetch irrigation adjustment logs from PostgreSQL."""
     try:
         plan_uuid = uuid.UUID(crop_plan_id)
@@ -478,46 +644,85 @@ def get_irrigation_logs(crop_plan_id: str, limit: int = 20, db: Session = Depend
             raise HTTPException(status_code=404, detail="Crop plan not found")
 
         logs = fetch_irrigation_logs(db, crop_plan_id, limit=limit)
-        serialized = [
-            {
-                "date": log.date.isoformat() if log.date else None,
-                "originalAmount": log.original_amount,
-                "adjustedAmount": log.adjusted_amount,
-                "reason": log.weather_adjustment,
-                "autoTriggered": log.auto_triggered,
-                "createdAt": log.created_at.isoformat() if getattr(log, "created_at", None) else None,
-            }
-            for log in logs
-        ]
+        serialized = []
+        for log in logs:
+            status_text = (getattr(log, "status", None) or "completed").title()
+            weather_adj = log.weather_adjustment or status_text
+            if (log.weather_adjustment or "").lower().strip() == "no weather data":
+                weather_adj = status_text
+
+            serialized.append(
+                {
+                    "date": log.irrigation_date.isoformat() if getattr(log, "irrigation_date", None) else None,
+                    "originalAmount": log.original_amount,
+                    "adjustedAmount": log.adjusted_amount,
+                    "reason": log.weather_adjustment,
+                    "weatherAdjustment": weather_adj,
+                    "result": weather_adj,
+                    "status": status_text,
+                    "autoTriggered": log.auto_triggered,
+                    "plannedLiters": getattr(log, "planned_liters", None),
+                    "actualLiters": getattr(log, "actual_liters", None),
+                    "durationSeconds": getattr(log, "duration_seconds", None),
+                    "weatherAdjustmentPercent": getattr(log, "weather_adjustment_percent", None),
+                    "createdAt": log.created_at.isoformat() if getattr(log, "created_at", None) else None,
+                    "executedAt": log.created_at.isoformat() if getattr(log, "created_at", None) else None,
+                }
+            )
+        
         return {"logs": serialized}
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/irrigation/schedule/{crop_plan_id}")
-def get_irrigation_schedule(crop_plan_id: str, limit: int = 7, db: Session = Depends(get_db)):
-    """Fetch upcoming irrigation schedule entries."""
+def get_irrigation_schedule(
+    crop_plan_id: str,
+    limit: int = 7,
+    moisture: float = None,
+    refresh: bool = False,
+    lat: float | None = None,
+    lon: float | None = None,
+    db: Session = Depends(get_db),
+):
+    """Fetch upcoming irrigation schedule. If refresh (or moisture) provided, regenerate using Weather API only (moisture ignored)."""
     try:
         plan_uuid = uuid.UUID(crop_plan_id)
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        # Regenerate on demand using Weather API (moisture ignored). If today's entry is completed, start from tomorrow.
+        if refresh or moisture is not None:
+            weather_current = fetch_weather_data(lat or 18.45, lon or 73.87).get("current")
+            stages = db.query(CropStage).filter(CropStage.crop_plan_id == plan_uuid).all()
+
+            today_date = datetime.now(timezone.utc).date()
+            today_start = datetime.combine(today_date, datetime.min.time(), tzinfo=timezone.utc)
+            today_end = today_start + timedelta(days=1)
+            entry_today = (
+                db.query(IrrigationSchedule)
+                .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+                .filter(IrrigationSchedule.date >= today_start)
+                .filter(IrrigationSchedule.date < today_end)
+                .order_by(IrrigationSchedule.date)
+                .first()
+            )
+            start_date = today_date + timedelta(days=1) if entry_today and (entry_today.status or "").lower() == "completed" else today_date
+
+            generate_irrigation_schedule(db, plan, stages, weather_current, None, start_date=start_date)
+
         today = datetime.now(timezone.utc)
         entries = (
             db.query(IrrigationSchedule)
             .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
             .filter(IrrigationSchedule.date >= today)
+            .filter(IrrigationSchedule.status != "completed")
             .order_by(IrrigationSchedule.date)
             .limit(limit)
             .all()
         )
-        serialized = [
-            {
-                "date": item.date.isoformat(),
-                "stage": item.stage,
-                "water": item.water_amount_liters,
-                "status": item.status,
-                "autoAdjusted": item.auto_adjusted,
-            }
-            for item in entries
-        ]
+        serialized = [serialize_schedule(item) for item in entries]
         return serialized
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
@@ -556,11 +761,14 @@ def get_calendar_events(crop_plan_id: str, db: Session = Depends(get_db)):
 
         irrigation_payload = [
             {
-                "date": item.date.isoformat(),
+                "date": _as_date(item.date).isoformat() if _as_date(item.date) else None,
                 "water_amount": item.water_amount_liters,
                 "adjusted": item.auto_adjusted,
                 "stage": item.stage,
                 "status": item.status,
+                "actual_liters": item.actual_liters,
+                "executed_at": item.executed_at.isoformat() if item.executed_at else None,
+                "weather_adjustment_percent": item.weather_adjustment_percent,
             }
             for item in schedule
         ]
@@ -613,38 +821,229 @@ def trigger_irrigation(crop_plan_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/irrigation/next-command/{crop_plan_id}")
-def next_command(crop_plan_id: str, db: Session = Depends(get_db)):
-    """Arduino-friendly next action for irrigation."""
+def next_command(crop_plan_id: str, lat: float | None = None, lon: float | None = None, db: Session = Depends(get_db)):
+    """Arduino-friendly next action for irrigation with execution logging."""
     try:
         plan_uuid = uuid.UUID(crop_plan_id)
-        today = datetime.now(timezone.utc).date()
-        start_today = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        _mark_missed_irrigations(db)
+
+        start_today = _start_of_day(datetime.now(timezone.utc))
+        end_today = start_today + timedelta(days=1)
         entry = (
             db.query(IrrigationSchedule)
             .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
             .filter(IrrigationSchedule.date >= start_today)
+            .filter(IrrigationSchedule.date < end_today)
             .order_by(IrrigationSchedule.date)
             .first()
         )
-        if entry is None or entry.water_amount_liters <= 0 or entry.status not in {"pending", None}:
+
+        if entry is None or entry.water_amount_liters <= 0 or (entry.status not in {"pending", "adjusted", None}):
             return {
                 "action": "SKIP",
                 "liters": 0,
                 "duration_seconds": 0,
+                "reason": "No pending irrigation today",
             }
 
-        liters = entry.water_amount_liters
-        duration_seconds = int(max(0, liters) / 10)  # simple flow heuristic
+        weather = None
+        if lat is not None and lon is not None:
+            try:
+                weather_resp = fetch_weather_data(lat, lon)
+                weather = weather_resp.get("current") if isinstance(weather_resp, dict) else None
+            except Exception:
+                weather = None
+
+        factor, reason, should_skip = _compute_weather_adjustment(weather)
+
+        planned = entry.water_amount_liters or 0
+        adjusted = round(planned * factor) if planned else 0
+        weather_pct = round(((adjusted - planned) / planned) * 100, 2) if planned else 0
+        now_ts = datetime.now(timezone.utc)
+
+        if should_skip or adjusted <= 0:
+            entry.status = "skipped"
+            entry.actual_liters = 0
+            entry.executed_at = now_ts
+            entry.weather_adjustment_percent = -100 if planned else 0
+            entry.auto_adjusted = True
+
+            log_row = IrrigationLog(
+                crop_plan_id=plan_uuid,
+                irrigation_date=_as_date(entry.date),
+                original_amount=planned,
+                adjusted_amount=0,
+                weather_adjustment=reason,
+                auto_triggered=True,
+                planned_liters=planned,
+                actual_liters=0,
+                duration_seconds=0,
+                status="skipped",
+                weather_adjustment_percent=entry.weather_adjustment_percent,
+            )
+            db.add(log_row)
+            db.commit()
+            return {
+                "action": "SKIP",
+                "liters": 0,
+                "duration_seconds": 0,
+                "reason": reason,
+            }
+
+        duration_seconds = int(max(0, adjusted) / 10)
+        entry.status = "completed"
+        entry.actual_liters = adjusted
+        entry.executed_at = now_ts
+        entry.weather_adjustment_percent = weather_pct
+        entry.auto_adjusted = entry.auto_adjusted or factor != 1.0
+
+        log_row = IrrigationLog(
+            crop_plan_id=plan_uuid,
+            irrigation_date=_as_date(entry.date),
+            original_amount=planned,
+            adjusted_amount=adjusted,
+            weather_adjustment=reason,
+            auto_triggered=True,
+            planned_liters=planned,
+            actual_liters=adjusted,
+            duration_seconds=duration_seconds,
+            status="completed",
+            weather_adjustment_percent=weather_pct,
+        )
+        db.add(log_row)
+        db.commit()
+
         return {
             "action": "WATER",
-            "liters": liters,
+            "liters": adjusted,
             "duration_seconds": duration_seconds,
             "method": entry.method,
             "schedule_id": str(entry.id),
             "date": entry.date.isoformat(),
+            "weather_adjustment_percent": weather_pct,
         }
     except HTTPException:
         raise
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/sensor/raindrop")
+def register_raindrop(crop_plan_id: str, rain_mm: float, db: Session = Depends(get_db)):
+    """
+    Register raindrop sensor data for logging only. Weather API will drive decisions.
+    POST /sensor/raindrop?crop_plan_id=xxx&rain_mm=6.5
+    """
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc).date()
+        today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        
+        entry = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= today_start)
+            .filter(IrrigationSchedule.date < today_start + timedelta(days=1))
+            .first()
+        )
+        
+        if entry is None:
+            return {"status": "no_schedule", "message": "No irrigation scheduled for today"}
+        
+        # For demo: do not alter schedule based on raindrop sensor; rely on Weather API rain.
+        print(f"[SENSOR] Raindrop (logged only): {rain_mm}mm for plan {crop_plan_id}")
+        return {"action": "LOGGED", "status": "accepted", "rain_mm": rain_mm}
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/sensor/dht11")
+def register_dht11(crop_plan_id: str, temperature: float, humidity: float, db: Session = Depends(get_db)):
+    """
+    Register DHT11 sensor data for logging only. Weather API will drive adjustments.
+    POST /sensor/dht11?crop_plan_id=xxx&temperature=36.5&humidity=28
+    """
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc).date()
+        today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        
+        entry = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= today_start)
+            .filter(IrrigationSchedule.date < today_start + timedelta(days=1))
+            .first()
+        )
+        
+        if entry is None:
+            return {"status": "no_schedule", "message": "No irrigation scheduled for today"}
+
+        # For demo: do not alter schedule based on DHT11; rely on Weather API temp/humidity.
+        log_row = IrrigationLog(
+            crop_plan_id=plan_uuid,
+            irrigation_date=today,
+            original_amount=entry.water_amount_liters or 0,
+            adjusted_amount=entry.water_amount_liters or 0,
+            weather_adjustment=f"DHT11 logged temp={temperature}°C humidity={humidity}% (no schedule change)",
+            status="pending",
+            weather_adjustment_percent=0,
+        )
+        db.add(log_row)
+        db.commit()
+
+        print(f"[SENSOR] DHT11 (logged only): temp={temperature}°C, humidity={humidity}% for plan {crop_plan_id}")
+        return {
+            "status": "logged",
+            "temperature": temperature,
+            "humidity": humidity,
+            "message": "No schedule change; using Weather API for adjustments",
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/sensor/soil-moisture")
+def register_soil_moisture(crop_plan_id: str, moisture_percent: float, db: Session = Depends(get_db)):
+    """
+    Log soil moisture sensor data only; irrigation decisions use Weather API.
+    POST /sensor/soil-moisture?crop_plan_id=xxx&moisture_percent=45
+    """
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        today = datetime.now(timezone.utc).date()
+        today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        
+        entry = (
+            db.query(IrrigationSchedule)
+            .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
+            .filter(IrrigationSchedule.date >= today_start)
+            .filter(IrrigationSchedule.date < today_start + timedelta(days=1))
+            .first()
+        )
+        
+        if entry is None:
+            return {"status": "no_schedule", "message": "No irrigation scheduled for today"}
+        
+        # Log only; do not alter schedule. Weather API drives irrigation.
+        log_row = IrrigationLog(
+            crop_plan_id=plan_uuid,
+            irrigation_date=today,
+            original_amount=entry.water_amount_liters or 0,
+            adjusted_amount=entry.water_amount_liters or 0,
+            weather_adjustment=f"Soil moisture logged: {moisture_percent}% (no schedule change)",
+            status=entry.status or "pending",
+            weather_adjustment_percent=0,
+        )
+        db.add(log_row)
+        db.commit()
+
+        print(f"[SENSOR] Soil Moisture (logged only): {moisture_percent}% for plan {crop_plan_id}")
+        return {
+            "status": "logged",
+            "moisture_percent": moisture_percent,
+            "message": "No schedule change; using Weather API",
+        }
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -654,5 +1053,12 @@ def warmup():
     try:
         # Warm minimal dependencies without blocking on local LLM
         get_firestore()  # Initialize Firebase
+        db_gen = get_db()
+        session = next(db_gen)
+        try:
+            _mark_missed_irrigations(session)
+        finally:
+            session.close()
+            db_gen.close()
     except Exception:
         pass
