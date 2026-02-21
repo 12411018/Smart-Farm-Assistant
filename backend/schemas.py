@@ -1,8 +1,9 @@
 """Pydantic schemas shared across endpoints."""
 
 from typing import Optional, List
+from pydantic import BaseModel, EmailStr 
 from datetime import datetime
-from pydantic import BaseModel
+
 
 
 class ChatRequest(BaseModel):
@@ -30,6 +31,24 @@ class CropPlanRequest(BaseModel):
     waterSourceType: Optional[str] = None
 
 
+# Authentication schemas
+class UserSignUp(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class UserSignIn(BaseModel):
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    is_active: bool
+
 # Chat History Schemas
 class MessageResponse(BaseModel):
     id: str
@@ -55,6 +74,15 @@ class ConversationResponse(BaseModel):
         from_attributes = True
 
 
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+
+class GoogleAuthRequest(BaseModel):
+    token: str
+    username: Optional[str] = None
 class ConversationDetailResponse(BaseModel):
     id: str
     user_id: str

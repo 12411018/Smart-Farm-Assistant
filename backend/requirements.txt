@@ -5,4 +5,7 @@ python-dotenv
 firebase-admin
 sqlalchemy
 psycopg2-binary
-alembic
+alembicpasslib[bcrypt]
+PyJWT
+google-auth
+google-auth-oauthlib
