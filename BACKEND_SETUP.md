@@ -2,6 +2,41 @@
 
 ## Quick Start
 
+## Postgres Setup (local)
+
+If you want to run a local PostgreSQL for the backend, a Docker Compose setup is included at the repo root.
+
+1. Start Postgres + Adminer (inspect DB at http://localhost:8080):
+
+```powershell
+docker-compose up -d
+```
+
+2. The compose file creates a database named `smart_irrigation` and a `postgres` user with password `purva@2006`.
+
+3. The backend already includes a `backend/.env` with `DATABASE_URL` pointing to the local DB. If you prefer to set or override it manually:
+
+Windows PowerShell:
+```powershell
+setx DATABASE_URL "postgresql+psycopg2://postgres:purva%402006@localhost:5432/smart_irrigation"
+```
+
+macOS / Linux (bash):
+```bash
+export DATABASE_URL="postgresql+psycopg2://postgres:purva%402006@localhost:5432/smart_irrigation"
+```
+
+4. Run migrations to create the schema:
+
+```powershell
+cd backend
+pip install -r requirements.txt
+alembic upgrade head
+```
+
+If `alembic` is not on PATH, run it via `python -m alembic upgrade head`.
+
+
 ### 1️⃣ Get Hugging Face API Key
 - Go to: https://huggingface.co/settings/tokens
 - Create a new token (read access is fine)

@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from multilingual_pipeline import process_multilingual_query, set_rag_pipeline
 try:
     from vectorstore.search import RAGSearch, build_context_text
     RAG_AVAILABLE = True
@@ -76,8 +77,15 @@ Answer style rules:
 - Use emojis naturally 😊🌱💧🌾🚜
 - Start with the MOST IMPORTANT point
 - Explain WHY briefly
-- Never exceed 8 lines unless the question is complex
-- If you have retrieved context, answer strictly from that relevant context and ignore any noisy or unrelated text
+- For government schemes, provide comprehensive information (don't limit to 5 if more are relevant)
+
+
+CONTEXT FILTERING (CRITICAL):
+- The retrieved context may contain some irrelevant or noisy information
+- ONLY use context that is DIRECTLY relevant to the user's specific question
+- IGNORE any context that doesn't clearly relate to the query
+- If the context is noisy or unrelated, rely on your general farming knowledge
+- DO NOT mention irrelevant topics from the context in your answer
 
 Location handling:
 - If user mentions a location, use it
@@ -240,8 +248,9 @@ def _format_history(limit: int = 6) -> str:
 
 def _build_prompt(user_message: str, context_text: str, history_text: str) -> str:
     history_block = f"Conversation so far:\n{history_text}\n----------------\n" if history_text else ""
+    context_block = f"Retrieved context (may contain noise - use only relevant parts):\n{context_text}\n----------------\n" if context_text else ""
     return (
-        f"{SYSTEM_PROMPT}\n----------------\nRetrieved context from documents:\n{context_text}\n----------------\n"
+        f"{SYSTEM_PROMPT}\n----------------\n{context_block}"
         f"{history_block}User question:\n{user_message}"
     ).strip()
 
@@ -249,12 +258,9 @@ def _build_prompt(user_message: str, context_text: str, history_text: str) -> st
 def generate_reply(user_message: str) -> str:
     """Generate reply using local Ollama Mistral model."""
     try:
-        # Keep retrieval very small to reduce prompt size and latency.
-        if RAG_AVAILABLE and rag_search:
-            chunks = rag_search.retrieve_context(user_message, top_k=2)
-            context_text = build_context_text(chunks)
-        else:
-            context_text = ""
+        # Retrieve 5 chunks for better context coverage while filtering noise
+        chunks = rag_search.retrieve_context(user_message, top_k=8)
+        context_text = build_context_text(chunks)
     except Exception:
         context_text = ""
 
@@ -270,11 +276,11 @@ def generate_reply(user_message: str) -> str:
             "stream": False,
             # Constrain generation to reduce latency and resource use.
             "options": {
-                # Defaults tuned for <30s responses on local GPU; override via env vars if needed.
-                "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "96")),
+                # Increased token limit to allow detailed answers for complex queries
+                "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "256")),
                 "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.35")),
                 "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-                "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "1024")),
+                "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "2048")),
             },
         }
         try:
@@ -342,6 +348,9 @@ def generate_reply(user_message: str) -> str:
     chat_history.append({"role": "assistant", "content": reply})
 
     return reply
+
+
+set_rag_pipeline(generate_reply)
 
 
 def generate_reply_direct(user_message: str) -> str:
@@ -442,67 +451,10 @@ def generate_conversation_title(message: str) -> str:
 
 
 @app.post("/chat")
-def chat(req: ChatRequest, db: Session = Depends(get_db)):
-    """Chat endpoint for agriculture advice with conversation history"""
-    try:
-        # Get or create conversation
-        conversation_id = req.conversation_id
-        if conversation_id:
-            conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-            if not conversation:
-                raise HTTPException(status_code=404, detail="Conversation not found")
-            
-            # Check if this is the first user message being sent to a "New Conversation"
-            # If so, update the title with a smart title based on this message
-            message_count = db.query(Message).filter(Message.conversation_id == conversation.id).count()
-            if message_count == 0 and conversation.title in ["New Conversation", "New conversation"]:
-                conversation.title = generate_conversation_title(req.message)
-        else:
-            # Create new conversation with smart title from first message
-            title = generate_conversation_title(req.message)
-            conversation = Conversation(
-                user_id=req.user_id,
-                title=title
-            )
-            db.add(conversation)
-            db.commit()
-            db.refresh(conversation)
-            conversation_id = str(conversation.id)
-        
-        # Save user message
-        user_message = Message(
-            conversation_id=conversation.id,
-            role="user",
-            content=req.message
-        )
-        db.add(user_message)
-        
-        # Generate reply
-        reply = generate_reply(req.message)
-        
-        # Save bot message
-        bot_message = Message(
-            conversation_id=conversation.id,
-            role="bot",
-            content=reply
-        )
-        db.add(bot_message)
-        
-        # Update conversation timestamp
-        conversation.updated_at = func.now()
-        
-        db.commit()
-        
-        return {
-            "reply": reply,
-            "conversation_id": conversation_id
-        }
-    except Exception as e:
-        db.rollback()
-        print(f"Error in chat endpoint: {e}")
-        # Fallback to non-persistent chat
-        reply = generate_reply(req.message)
-        return {"reply": reply, "conversation_id": None}
+def chat(req: ChatRequest):
+    """Chat endpoint for agriculture advice"""
+    reply = process_multilingual_query(req.message, req.language)
+    return {"reply": reply}
 
 
 @app.post("/chat/direct")

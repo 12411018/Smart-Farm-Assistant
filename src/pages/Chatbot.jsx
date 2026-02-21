@@ -25,6 +25,17 @@ function getGuestId() {
   if (!guestId) {
     guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     localStorage.setItem('smart_farm_guest_id', guestId);
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
+// NEW FEATURE: Get or create a unique user ID that persists across sessions
+function getUserId() {
+  let userId = localStorage.getItem('smart_farm_user_id');
+  if (!userId) {
+    // Generate a unique ID: timestamp + random string
+    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('smart_farm_user_id', userId);
+    console.log('Created new user ID:', userId);
+  } else {
+    console.log('Retrieved existing user ID:', userId);
   }
   return guestId;
 }
@@ -291,8 +302,8 @@ function Chatbot() {
 🌧️ Rainfall Status: No rain expected in next 24 hours
 💰 Budget: Medium-scale farm`;
 
-      // Call FastAPI backend (match current host, port 8000)
-      const backendUrl = `${window.location.protocol}//${window.location.hostname}:8000/chat`;
+      // Call FastAPI backend using environment variable
+      const backendUrl = `${API_BASE}/chat`;
       console.log('Sending request to:', backendUrl);
       console.log('Message:', inputValue);
       
@@ -304,12 +315,11 @@ function Chatbot() {
         body: JSON.stringify({
           message: inputValue,
           context: context,
+          language: 'en',
           conversation_id: currentConversationId,
           user_id: userId,
         }),
       });
-
-      console.log('Response status:', response.status);
       
       if (!response.ok) {
         console.error('Backend returned error:', response.status, response.statusText);
@@ -317,7 +327,6 @@ function Chatbot() {
       }
 
       const data = await response.json();
-      console.log('Backend response:', data);
 
       // Update conversation ID if new conversation was created
       if (data.conversation_id && data.conversation_id !== currentConversationId) {
@@ -339,7 +348,7 @@ function Chatbot() {
       console.error('Chat error:', error.message);
       const errorMessage = {
         id: messages.length + 2,
-        text: `Connection error: ${error.message}. Make sure FastAPI backend is running on http://127.0.0.1:8000`,
+        text: `Connection error: ${error.message}. Make sure FastAPI backend is running on ${API_BASE}`,
         sender: 'bot',
         timestamp: new Date(),
       };

@@ -1,0 +1,997 @@
+[
+  {
+    "name": "Wheat",
+    "tempRange": [
+      15,
+      25
+    ],
+    "rainfallRange": [
+      40,
+      80
+    ],
+    "humidityRange": [
+      40,
+      60
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Rice",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      100,
+      200
+    ],
+    "humidityRange": [
+      70,
+      90
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Clayey",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Monsoon"
+    ]
+  },
+  {
+    "name": "Maize",
+    "tempRange": [
+      18,
+      28
+    ],
+    "rainfallRange": [
+      50,
+      120
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Monsoon"
+    ]
+  },
+  {
+    "name": "Barley",
+    "tempRange": [
+      12,
+      24
+    ],
+    "rainfallRange": [
+      30,
+      70
+    ],
+    "humidityRange": [
+      35,
+      55
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Chickpea",
+    "tempRange": [
+      15,
+      23
+    ],
+    "rainfallRange": [
+      40,
+      70
+    ],
+    "humidityRange": [
+      45,
+      65
+    ],
+    "phRange": [
+      6.0,
+      8.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Lentil",
+    "tempRange": [
+      14,
+      24
+    ],
+    "rainfallRange": [
+      35,
+      65
+    ],
+    "humidityRange": [
+      40,
+      60
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Blackgram",
+    "tempRange": [
+      22,
+      32
+    ],
+    "rainfallRange": [
+      60,
+      120
+    ],
+    "humidityRange": [
+      60,
+      75
+    ],
+    "phRange": [
+      6.5,
+      7.8
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Red"
+    ],
+    "seasons": [
+      "PostMonsoon"
+    ]
+  },
+  {
+    "name": "Mothbeans",
+    "tempRange": [
+      24,
+      34
+    ],
+    "rainfallRange": [
+      30,
+      60
+    ],
+    "humidityRange": [
+      50,
+      70
+    ],
+    "phRange": [
+      6.5,
+      8.0
+    ],
+    "soilTypes": [
+      "Sandy",
+      "Loamy"
+    ],
+    "seasons": [
+      "PostMonsoon"
+    ]
+  },
+  {
+    "name": "Mungbean",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      60,
+      75
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Red"
+    ],
+    "seasons": [
+      "Monsoon"
+    ]
+  },
+  {
+    "name": "Pigeonpeas",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      60,
+      150
+    ],
+    "humidityRange": [
+      65,
+      80
+    ],
+    "phRange": [
+      6.0,
+      8.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Red"
+    ],
+    "seasons": [
+      "Monsoon"
+    ]
+  },
+  {
+    "name": "Arhar",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      60,
+      150
+    ],
+    "humidityRange": [
+      65,
+      80
+    ],
+    "phRange": [
+      6.0,
+      8.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Red",
+      "Loamy"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Tomato",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      60,
+      120
+    ],
+    "humidityRange": [
+      55,
+      75
+    ],
+    "phRange": [
+      6.0,
+      6.8
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Black",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Cucumber",
+    "tempRange": [
+      22,
+      32
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      65,
+      85
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Brinjal",
+    "tempRange": [
+      24,
+      32
+    ],
+    "rainfallRange": [
+      60,
+      120
+    ],
+    "humidityRange": [
+      65,
+      85
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Red"
+    ],
+    "seasons": [
+      "Spring"
+    ]
+  },
+  {
+    "name": "Cabbage",
+    "tempRange": [
+      15,
+      25
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Clayey",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Bottle Gourd",
+    "tempRange": [
+      21,
+      32
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      65,
+      85
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Spring"
+    ]
+  },
+  {
+    "name": "Okra",
+    "tempRange": [
+      24,
+      34
+    ],
+    "rainfallRange": [
+      50,
+      120
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Sandy",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Banana",
+    "tempRange": [
+      21,
+      32
+    ],
+    "rainfallRange": [
+      100,
+      200
+    ],
+    "humidityRange": [
+      75,
+      90
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Apple",
+    "tempRange": [
+      12,
+      22
+    ],
+    "rainfallRange": [
+      100,
+      150
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Mango",
+    "tempRange": [
+      24,
+      32
+    ],
+    "rainfallRange": [
+      80,
+      200
+    ],
+    "humidityRange": [
+      70,
+      85
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Red",
+      "Laterite"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Orange",
+    "tempRange": [
+      18,
+      28
+    ],
+    "rainfallRange": [
+      75,
+      150
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Red"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Pomegranate",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      40,
+      80
+    ],
+    "humidityRange": [
+      55,
+      75
+    ],
+    "phRange": [
+      6.5,
+      8.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Red"
+    ],
+    "seasons": [
+      "PostMonsoon"
+    ]
+  },
+  {
+    "name": "Papaya",
+    "tempRange": [
+      22,
+      32
+    ],
+    "rainfallRange": [
+      80,
+      150
+    ],
+    "humidityRange": [
+      70,
+      85
+    ],
+    "phRange": [
+      6.0,
+      6.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Grapes",
+    "tempRange": [
+      16,
+      28
+    ],
+    "rainfallRange": [
+      40,
+      80
+    ],
+    "humidityRange": [
+      50,
+      70
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Red",
+      "Loamy"
+    ],
+    "seasons": [
+      "Autumn"
+    ]
+  },
+  {
+    "name": "Coconut",
+    "tempRange": [
+      24,
+      32
+    ],
+    "rainfallRange": [
+      100,
+      200
+    ],
+    "humidityRange": [
+      80,
+      95
+    ],
+    "phRange": [
+      5.5,
+      7.0
+    ],
+    "soilTypes": [
+      "Sandy",
+      "Loamy",
+      "Laterite"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Cotton",
+    "tempRange": [
+      20,
+      32
+    ],
+    "rainfallRange": [
+      60,
+      120
+    ],
+    "humidityRange": [
+      65,
+      85
+    ],
+    "phRange": [
+      6.0,
+      8.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Sugarcane",
+    "tempRange": [
+      22,
+      32
+    ],
+    "rainfallRange": [
+      100,
+      150
+    ],
+    "humidityRange": [
+      70,
+      85
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Coffee",
+    "tempRange": [
+      15,
+      24
+    ],
+    "rainfallRange": [
+      150,
+      250
+    ],
+    "humidityRange": [
+      70,
+      85
+    ],
+    "phRange": [
+      5.5,
+      6.5
+    ],
+    "soilTypes": [
+      "Red",
+      "Laterite",
+      "Black"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Jute",
+    "tempRange": [
+      24,
+      34
+    ],
+    "rainfallRange": [
+      150,
+      250
+    ],
+    "humidityRange": [
+      75,
+      95
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Clayey",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Groundnut",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      60,
+      75
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Sandy",
+      "Loamy",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Chilli",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      50,
+      120
+    ],
+    "humidityRange": [
+      60,
+      80
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Turmeric",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      100,
+      200
+    ],
+    "humidityRange": [
+      70,
+      90
+    ],
+    "phRange": [
+      6.0,
+      7.0
+    ],
+    "soilTypes": [
+      "Black",
+      "Loamy",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Soybean",
+    "tempRange": [
+      20,
+      30
+    ],
+    "rainfallRange": [
+      50,
+      100
+    ],
+    "humidityRange": [
+      60,
+      75
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Red"
+    ],
+    "seasons": [
+      "Summer"
+    ]
+  },
+  {
+    "name": "Sunflower",
+    "tempRange": [
+      18,
+      28
+    ],
+    "rainfallRange": [
+      40,
+      80
+    ],
+    "humidityRange": [
+      55,
+      70
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Black"
+    ],
+    "seasons": [
+      "PostMonsoon"
+    ]
+  },
+  {
+    "name": "Peas",
+    "tempRange": [
+      13,
+      23
+    ],
+    "rainfallRange": [
+      40,
+      70
+    ],
+    "humidityRange": [
+      45,
+      65
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  },
+  {
+    "name": "Kidneybeans",
+    "tempRange": [
+      16,
+      28
+    ],
+    "rainfallRange": [
+      60,
+      150
+    ],
+    "humidityRange": [
+      60,
+      75
+    ],
+    "phRange": [
+      5.5,
+      6.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Sandy",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Monsoon"
+    ]
+  },
+  {
+    "name": "Mustard",
+    "tempRange": [
+      12,
+      22
+    ],
+    "rainfallRange": [
+      30,
+      70
+    ],
+    "humidityRange": [
+      40,
+      60
+    ],
+    "phRange": [
+      6.0,
+      7.5
+    ],
+    "soilTypes": [
+      "Loamy",
+      "Black",
+      "Alluvial"
+    ],
+    "seasons": [
+      "Winter"
+    ]
+  }
+]
