@@ -1,4 +1,15 @@
-"""SQLAlchemy models for crop planning and irrigation."""
+"""SQLAlchemy models for crop planning and irrigation.
+
+MERGE NOTE: This file includes Chat History models (Conversation, Message) 
+at the end which are NOT in the GitHub repository. These are local enhancements
+that enable persistent conversation tracking. They are OPTIONAL and additive only.
+
+Enhanced models (lines 130-155):
+- Conversation: Store chat metadata
+- Message: Store individual chat messages
+
+These models are backward compatible and won't break existing functionality.
+"""
 
 import uuid
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
@@ -118,3 +129,37 @@ class WeatherLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     crop_plan = relationship("CropPlan", back_populates="weather_logs")
+
+
+class Conversation(Base):
+    """Chat conversation model for storing chat history."""
+    __tablename__ = "conversations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String, index=True, nullable=False)
+    title = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    is_archived = Column(Boolean, default=False, nullable=False)
+
+    messages = relationship(
+        "Message",
+        cascade="all, delete-orphan",
+        back_populates="conversation",
+        passive_deletes=True,
+        order_by="Message.timestamp",
+    )
+
+
+class Message(Base):
+    """Chat message model for storing individual messages in a conversation."""
+    __tablename__ = "messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False)
+    role = Column(String, nullable=False)  # 'user' or 'bot'
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    tokens_used = Column(Integer, nullable=True, default=0)
+
+    conversation = relationship("Conversation", back_populates="messages")
