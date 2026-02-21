@@ -8,12 +8,18 @@ import {
   TrendingDown,
   TrendingUp,
   Wind,
+  MapPin,
+  Tractor,
+  IndianRupee,
+  PencilLine,
 } from 'lucide-react';
 import useIrrigationData from '../hooks/useIrrigationData';
+import { useAuth } from '../context/AuthContext';
 import '../styles/Dashboard.css';
 
 function Dashboard() {
   const { data: irrigationData } = useIrrigationData();
+  const { user, isAuthenticated, setShowEditProfile } = useAuth();
 
   const temperatureValue = Number(irrigationData?.temperature ?? 27);
   const humidityValue = Number(irrigationData?.humidity ?? 68);
@@ -214,6 +220,98 @@ function Dashboard() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* Farm Overview (Profile Data) */}
+          <div className="farm-overview-section">
+            <div className="card farm-overview-card">
+              <div className="fo-header">
+                <h2>Farm Overview</h2>
+                {isAuthenticated && (
+                  <button className="fo-edit-btn" onClick={() => setShowEditProfile(true)}>
+                    <PencilLine size={14} />
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {!isAuthenticated ? (
+                <p className="fo-empty">Sign in to see your farm details here.</p>
+              ) : !user?.land_owned_acres && !user?.land_in_use_acres && !user?.revenue ? (
+                <p className="fo-empty">
+                  No farm details yet.{' '}
+                  <button className="fo-link" onClick={() => setShowEditProfile(true)}>Complete your profile →</button>
+                </p>
+              ) : (
+                <>
+                  <div className="fo-tiles">
+                    {/* Land Owned */}
+                    <div className="fo-tile">
+                      <div className="fo-tile-icon" style={{ background: 'rgba(45,122,74,0.12)', color: '#2d7a4a' }}>
+                        <MapPin size={20} />
+                      </div>
+                      <div className="fo-tile-body">
+                        <span className="fo-tile-label">Land Owned</span>
+                        <span className="fo-tile-value">
+                          {user?.land_owned_acres != null ? user.land_owned_acres.toLocaleString() : '—'}
+                          {user?.land_owned_acres != null && <span className="fo-tile-unit"> ac</span>}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Land in Use */}
+                    <div className="fo-tile">
+                      <div className="fo-tile-icon" style={{ background: 'rgba(76,175,80,0.12)', color: '#388e3c' }}>
+                        <Tractor size={20} />
+                      </div>
+                      <div className="fo-tile-body">
+                        <span className="fo-tile-label">Land in Use</span>
+                        <span className="fo-tile-value">
+                          {user?.land_in_use_acres != null ? user.land_in_use_acres.toLocaleString() : '—'}
+                          {user?.land_in_use_acres != null && <span className="fo-tile-unit"> ac</span>}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Revenue */}
+                    <div className="fo-tile">
+                      <div className="fo-tile-icon" style={{ background: 'rgba(102,187,106,0.12)', color: '#2e7d32' }}>
+                        <IndianRupee size={20} />
+                      </div>
+                      <div className="fo-tile-body">
+                        <span className="fo-tile-label">Revenue / Investment</span>
+                        <span className="fo-tile-value">
+                          {user?.revenue != null ? `₹${Number(user.revenue).toLocaleString('en-IN')}` : '—'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Utilisation bar */}
+                  {user?.land_owned_acres > 0 && user?.land_in_use_acres != null && (
+                    <div className="fo-utilisation">
+                      <div className="fo-util-header">
+                        <span className="fo-util-label">Land Utilisation</span>
+                        <span className="fo-util-pct">
+                          {Math.min(100, Math.round((user.land_in_use_acres / user.land_owned_acres) * 100))}%
+                        </span>
+                      </div>
+                      <div className="fo-util-bar">
+                        <div
+                          className="fo-util-fill"
+                          style={{
+                            width: `${Math.min(100, (user.land_in_use_acres / user.land_owned_acres) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="fo-util-sub">
+                        {user.land_in_use_acres} of {user.land_owned_acres} acres actively farmed
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 

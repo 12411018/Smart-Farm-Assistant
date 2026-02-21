@@ -1,17 +1,4 @@
 """Smart Farming Assistant API - Main Application"""
-"""
-Smart Farming Assistant API - Enhanced Version with Chat History
-
-MERGE NOTE: This version includes chat history features not in GitHub repo:
-- Conversation and Message model imports (line 22)
-- Chat history schemas import (line 37)
-- Chat history endpoints (/api/conversations, etc.) - lines ~900-1100
-- Smart title generation in /chat endpoint
-- Auto-title-update logic
-
-These enhancements are backward compatible with GitHub version.
-All existing GitHub functionality is preserved.
-"""
 
 import os
 import uuid
@@ -65,7 +52,7 @@ from services.user_service import (
     authenticate_user,
     create_or_get_google_user,
 )
-from schemas import ChatRequest, WeatherRequest, CropPlanRequest, UserSignUp, UserSignIn, TokenResponse, ConversationResponse, ConversationDetailResponse, CreateConversationRequest, MessageResponse
+from schemas import ChatRequest, WeatherRequest, CropPlanRequest, UserSignUp, UserSignIn, TokenResponse, ConversationResponse, ConversationDetailResponse, CreateConversationRequest, MessageResponse, UpdateProfileRequest
 from auth import create_access_token, decode_access_token   # NEW: Chat history schemas
 
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
@@ -649,6 +636,9 @@ def signup(req: UserSignUp, db: Session = Depends(get_db)):
                 "username": user.username,
                 "email": user.email,
                 "is_active": user.is_active,
+                "land_owned_acres": user.land_owned_acres,
+                "land_in_use_acres": user.land_in_use_acres,
+                "revenue": user.revenue,
             },
         )
     except HTTPException:
@@ -676,6 +666,9 @@ def signin(req: UserSignIn, db: Session = Depends(get_db)):
                 "username": user.username,
                 "email": user.email,
                 "is_active": user.is_active,
+                "land_owned_acres": user.land_owned_acres,
+                "land_in_use_acres": user.land_in_use_acres,
+                "revenue": user.revenue,
             },
         )
     except HTTPException:
@@ -707,11 +700,79 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
             "username": user.username,
             "email": user.email,
             "is_active": user.is_active,
+            "land_owned_acres": user.land_owned_acres,
+            "land_in_use_acres": user.land_in_use_acres,
+            "revenue": user.revenue,
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/profile/{user_id}")
+def get_profile(user_id: str, authorization: str = Header(None), db: Session = Depends(get_db)):
+    """Get user profile — only accessible by the owner."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    token = authorization.replace("Bearer ", "")
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if payload.get("sub") != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this profile")
+    user = get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_active": user.is_active,
+        "land_owned_acres": user.land_owned_acres,
+        "land_in_use_acres": user.land_in_use_acres,
+        "revenue": user.revenue,
+    }
+
+
+@app.patch("/profile/{user_id}")
+def update_profile(user_id: str, req: UpdateProfileRequest, authorization: str = Header(None), db: Session = Depends(get_db)):
+    """Update user profile fields — only accessible by the owner."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    token = authorization.replace("Bearer ", "")
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if payload.get("sub") != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this profile")
+    user = get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if req.username is not None:
+        existing = get_user_by_username(db, req.username)
+        if existing and existing.id != user_id:
+            raise HTTPException(status_code=400, detail="Username already taken")
+        user.username = req.username
+    if req.land_owned_acres is not None:
+        user.land_owned_acres = req.land_owned_acres
+    if req.land_in_use_acres is not None:
+        user.land_in_use_acres = req.land_in_use_acres
+    if req.revenue is not None:
+        user.revenue = req.revenue
+
+    db.commit()
+    db.refresh(user)
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_active": user.is_active,
+        "land_owned_acres": user.land_owned_acres,
+        "land_in_use_acres": user.land_in_use_acres,
+        "revenue": user.revenue,
+    }
 
 
 @app.post("/crop-plan/create")

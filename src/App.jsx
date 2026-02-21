@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
 import AuthModal from './components/AuthModal';
+import EditProfileModal from './components/EditProfileModal';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import Home from './pages/Home';
@@ -72,6 +73,7 @@ function App() {
           </main>
           <Footer />
           <AuthModal />
+          <EditProfileModal />
         </div>
       </Router>
     </AuthProvider>
