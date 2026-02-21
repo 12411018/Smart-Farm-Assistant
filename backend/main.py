@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from vectorstore.search import RAGSearch, build_context_text
+from multilingual_pipeline import process_multilingual_query, set_rag_pipeline
 from weather_engine.weather_service import fetch_weather_data
 from weather_engine.weather_rules import build_weather_rules
 from weather_engine.weather_ai import generate_weather_advice
@@ -56,8 +57,15 @@ Answer style rules:
 - Use emojis naturally 😊🌱💧🌾🚜
 - Start with the MOST IMPORTANT point
 - Explain WHY briefly
-- Never exceed 8 lines unless the question is complex
-- If you have retrieved context, answer strictly from that relevant context and ignore any noisy or unrelated text
+- For government schemes, provide comprehensive information (don't limit to 5 if more are relevant)
+
+
+CONTEXT FILTERING (CRITICAL):
+- The retrieved context may contain some irrelevant or noisy information
+- ONLY use context that is DIRECTLY relevant to the user's specific question
+- IGNORE any context that doesn't clearly relate to the query
+- If the context is noisy or unrelated, rely on your general farming knowledge
+- DO NOT mention irrelevant topics from the context in your answer
 
 Location handling:
 - If user mentions a location, use it
@@ -220,8 +228,9 @@ def _format_history(limit: int = 6) -> str:
 
 def _build_prompt(user_message: str, context_text: str, history_text: str) -> str:
     history_block = f"Conversation so far:\n{history_text}\n----------------\n" if history_text else ""
+    context_block = f"Retrieved context (may contain noise - use only relevant parts):\n{context_text}\n----------------\n" if context_text else ""
     return (
-        f"{SYSTEM_PROMPT}\n----------------\nRetrieved context from documents:\n{context_text}\n----------------\n"
+        f"{SYSTEM_PROMPT}\n----------------\n{context_block}"
         f"{history_block}User question:\n{user_message}"
     ).strip()
 
@@ -229,8 +238,8 @@ def _build_prompt(user_message: str, context_text: str, history_text: str) -> st
 def generate_reply(user_message: str) -> str:
     """Generate reply using local Ollama Mistral model."""
     try:
-        # Keep retrieval very small to reduce prompt size and latency.
-        chunks = rag_search.retrieve_context(user_message, top_k=2)
+        # Retrieve 5 chunks for better context coverage while filtering noise
+        chunks = rag_search.retrieve_context(user_message, top_k=8)
         context_text = build_context_text(chunks)
     except Exception:
         context_text = ""
@@ -247,11 +256,11 @@ def generate_reply(user_message: str) -> str:
             "stream": False,
             # Constrain generation to reduce latency and resource use.
             "options": {
-                # Defaults tuned for <30s responses on local GPU; override via env vars if needed.
-                "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "96")),
+                # Increased token limit to allow detailed answers for complex queries
+                "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "256")),
                 "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.35")),
                 "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-                "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "1024")),
+                "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "2048")),
             },
         }
         try:
@@ -321,6 +330,9 @@ def generate_reply(user_message: str) -> str:
     return reply
 
 
+set_rag_pipeline(generate_reply)
+
+
 def generate_reply_direct(user_message: str) -> str:
     """Fast path: call Ollama directly without RAG/history for lowest latency."""
     headers = {"Content-Type": "application/json"}
@@ -369,7 +381,7 @@ def generate_reply_direct(user_message: str) -> str:
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Chat endpoint for agriculture advice"""
-    reply = generate_reply(req.message)
+    reply = process_multilingual_query(req.message, req.language)
     return {"reply": reply}
 
 

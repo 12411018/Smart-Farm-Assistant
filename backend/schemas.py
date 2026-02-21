@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     message: str
     context: str = ""
+    language: str = "en"  # User's selected language code (en, hi, mr, ta, te, kn, ml, gu, bn, pa)
 
 
 class WeatherRequest(BaseModel):
