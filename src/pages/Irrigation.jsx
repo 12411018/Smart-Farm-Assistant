@@ -17,6 +17,8 @@ import {
 import cropsData from '../data/cropsData.json';
 import '../styles/Irrigation.css';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
+
 function Irrigation() {
   const { selectedPlan, selectedPlanId, selectedPlanDetails, ensurePlanDetails } = useCropContext();
   const { data: irrigationData } = useIrrigationData();
@@ -41,7 +43,7 @@ function Irrigation() {
       try {
         // Get soil moisture from sensor (dashboard)
         const soilMoisture = Number(irrigationData?.soilRaw ?? null);
-        const url = soilMoisture ? `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}?moisture=${soilMoisture}` : `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}`;
+        const url = soilMoisture ? `${API_BASE}/irrigation/schedule/${selectedPlanId}?moisture=${soilMoisture}` : `${API_BASE}/irrigation/schedule/${selectedPlanId}`;
         const response = await fetch(url);
         if (response.ok) {
           const data = await response.json();
@@ -74,7 +76,7 @@ function Irrigation() {
       if (!selectedPlanId || !weather) return;
       try {
         const response = await fetch(
-          `http://127.0.0.1:8000/crop-insight/${selectedPlanId}?lat=18.45&lon=73.87`
+          `${API_BASE}/crop-insight/${selectedPlanId}?lat=18.45&lon=73.87`
         );
         if (response.ok) {
           const data = await response.json();
@@ -89,6 +91,7 @@ function Irrigation() {
   }, [selectedPlanId, weather]);
 
   const currentStage = useMemo(() => selectedPlan?.currentStage || null, [selectedPlan]);
+
 
   const todayIrrigation = useMemo(() => {
     if (!upcomingSchedule.length) return null;
