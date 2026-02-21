@@ -307,8 +307,6 @@ function Chatbot() {
           user_id: userId,
         }),
       });
-
-      console.log('Response status:', response.status);
       
       if (!response.ok) {
         console.error('Backend returned error:', response.status, response.statusText);
@@ -316,7 +314,6 @@ function Chatbot() {
       }
 
       const data = await response.json();
-      console.log('Backend response:', data);
 
       // Update conversation ID if new conversation was created
       if (data.conversation_id && data.conversation_id !== currentConversationId) {
