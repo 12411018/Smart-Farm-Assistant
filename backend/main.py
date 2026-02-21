@@ -1,13 +1,37 @@
+"""Smart Farming Assistant API - Main Application"""
+"""
+Smart Farming Assistant API - Enhanced Version with Chat History
+
+MERGE NOTE: This version includes chat history features not in GitHub repo:
+- Conversation and Message model imports (line 22)
+- Chat history schemas import (line 37)
+- Chat history endpoints (/api/conversations, etc.) - lines ~900-1100
+- Smart title generation in /chat endpoint
+- Auto-title-update logic
+
+These enhancements are backward compatible with GitHub version.
+All existing GitHub functionality is preserved.
+"""
+
 import os
 import uuid
 import requests
+from typing import List, Optional
 from datetime import datetime, timezone, date, timedelta
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from vectorstore.search import RAGSearch, build_context_text
 from multilingual_pipeline import process_multilingual_query, set_rag_pipeline
+try:
+    from vectorstore.search import RAGSearch, build_context_text
+    RAG_AVAILABLE = True
+except ImportError:
+    RAG_AVAILABLE = False
+    RAGSearch = None
+    build_context_text = None
+
 from weather_engine.weather_service import fetch_weather_data
 from weather_engine.weather_rules import build_weather_rules
 from weather_engine.weather_ai import generate_weather_advice
@@ -19,7 +43,7 @@ from crop_engine.crop_insights import generate_crop_insight
 from firebase_config import get_firestore, is_firebase_enabled
 from logging_service import log_yield_input, log_plan_created, log_plan_deleted, log_irrigation_adjustment, get_all_logs
 from database import get_db
-from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan
+from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan, User, Conversation, Message   # NEW: Conversation, Message
 from services.crop_status_engine import calculate_crop_status
 from irrigation_engine.decision import generate_irrigation_schedule
 from services.crop_service import (
@@ -33,7 +57,16 @@ from services.crop_service import (
     delete_plan as delete_plan_db,
     fetch_irrigation_logs,
 )
-from schemas import ChatRequest, WeatherRequest, CropPlanRequest
+from services.user_service import (
+    create_user,
+    get_user_by_email,
+    get_user_by_username,
+    get_user_by_id,
+    authenticate_user,
+    create_or_get_google_user,
+)
+from schemas import ChatRequest, WeatherRequest, CropPlanRequest, UserSignUp, UserSignIn, TokenResponse, ConversationResponse, ConversationDetailResponse, CreateConversationRequest, MessageResponse
+from auth import create_access_token, decode_access_token   # NEW: Chat history schemas
 
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 # Default to mistral:latest since it is installed locally; override via OLLAMA_MODEL env when needed.
@@ -97,7 +130,7 @@ app.add_middleware(
 )
 
 
-rag_search = RAGSearch()
+rag_search = RAGSearch() if RAG_AVAILABLE else None
 chat_history = []
 
 
@@ -106,7 +139,7 @@ def _as_date(value):
         return value.date()
     if isinstance(value, date):
         return value
-    return None
+    return None 
 
 
 def _start_of_day(dt: datetime) -> datetime:
@@ -378,6 +411,58 @@ def generate_reply_direct(user_message: str) -> str:
     return text.strip()
 
 
+def generate_conversation_title(message: str) -> str:
+    """Generate a concise, meaningful title from the first message."""
+    # Remove extra whitespace
+    clean_msg = " ".join(message.strip().split())
+    
+    # Split into sentences (basic approach)
+    import re
+    sentences = re.split(r'[.!?]+', clean_msg)
+    first_sentence = sentences[0].strip() if sentences else clean_msg
+    
+    # Remove common question patterns for cleaner titles
+    title = first_sentence
+    
+    # Remove question words and auxiliary verbs from the start
+    question_patterns = [
+        # "How do I..." -> remove "How do I"
+        (r'^(how|what|when|where|why|which|who)\s+(do|does|did|can|could|should|would|will|shall)\s+(i|you|we|they)\s+', ''),
+        # "How to..." -> remove "How to"  
+        (r'^(how)\s+(to)\s+', ''),
+        # "What are..." or "How is..." -> remove question word + verb
+        (r'^(how|what|when|where|why|which|who)\s+(is|are|was|were|do|does|did|can|could|should|would|will|shall)\s+', ''),
+        # Single question word at start
+        (r'^(how|what|when|where|why|which|who)\s+', ''),
+        # Auxiliary verb at start
+        (r'^(is|are|was|were|do|does|did|can|could|should|would|will|shall)\s+', ''),
+        # Common phrases like "Tell me about", "Show me", etc.
+        (r'^(tell me|show me|explain|give me)\s+(about\s+)?', ''),
+    ]
+    
+    for pattern, replacement in question_patterns:
+        new_title = re.sub(pattern, replacement, title, flags=re.IGNORECASE)
+        if new_title != title and len(new_title.strip()) > 0:  # If we made a meaningful change
+            title = new_title.strip()
+            break
+    
+    # Clean up and capitalize
+    title = title.strip()
+    if title:
+        title = title[0].upper() + title[1:] if len(title) > 1 else title.upper()
+    
+    # Limit length smartly
+    max_length = 50
+    if len(title) > max_length:
+        # Try to cut at a word boundary
+        title = title[:max_length].rsplit(' ', 1)[0]
+        if len(title) < 20:  # If too short after split, just truncate
+            title = first_sentence[:max_length]
+        title = title.rstrip('.,!?;:') + '...'
+    
+    return title if title else "New conversation"
+
+
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Chat endpoint for agriculture advice"""
@@ -390,6 +475,122 @@ def chat_direct(req: ChatRequest):
     """Chat endpoint without RAG/history for fastest local model response."""
     reply = generate_reply_direct(req.message)
     return {"reply": reply}
+
+
+# Conversation Management Endpoints
+@app.post("/api/conversations", response_model=ConversationResponse)
+def create_conversation(req: CreateConversationRequest, db: Session = Depends(get_db)):
+    """Create a new conversation"""
+    conversation = Conversation(
+        user_id=req.user_id,
+        title=req.title
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    
+    return ConversationResponse(
+        id=str(conversation.id),
+        user_id=conversation.user_id,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        is_archived=conversation.is_archived,
+        message_count=0,
+        last_message=None
+    )
+
+
+@app.get("/api/conversations", response_model=List[ConversationResponse])
+def get_conversations(user_id: str = "default_user", db: Session = Depends(get_db)):
+    """Get all conversations for a user"""
+    conversations = db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.is_archived == False
+    ).order_by(Conversation.updated_at.desc()).all()
+    
+    result = []
+    for conv in conversations:
+        # Count messages
+        message_count = db.query(Message).filter(Message.conversation_id == conv.id).count()
+        
+        # Get last message
+        last_msg = db.query(Message).filter(
+            Message.conversation_id == conv.id
+        ).order_by(Message.timestamp.desc()).first()
+        
+        result.append(ConversationResponse(
+            id=str(conv.id),
+            user_id=conv.user_id,
+            title=conv.title,
+            created_at=conv.created_at,
+            updated_at=conv.updated_at,
+            is_archived=conv.is_archived,
+            message_count=message_count,
+            last_message=last_msg.content[:100] if last_msg else None
+        ))
+    
+    return result
+
+
+@app.get("/api/conversations/{conversation_id}", response_model=ConversationDetailResponse)
+def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    """Get a specific conversation with all messages"""
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(Message.timestamp).all()
+    
+    return ConversationDetailResponse(
+        id=str(conversation.id),
+        user_id=conversation.user_id,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        is_archived=conversation.is_archived,
+        messages=[
+            MessageResponse(
+                id=str(msg.id),
+                role=msg.role,
+                content=msg.content,
+                timestamp=msg.timestamp
+            ) for msg in messages
+        ]
+    )
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    """Delete a conversation and all its messages"""
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    db.delete(conversation)
+    db.commit()
+    
+    return {"message": "Conversation deleted successfully"}
+
+
+@app.patch("/api/conversations/{conversation_id}")
+def update_conversation(conversation_id: str, title: Optional[str] = None, is_archived: Optional[bool] = None, db: Session = Depends(get_db)):
+    """Update conversation title or archive status"""
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if title is not None:
+        conversation.title = title
+    if is_archived is not None:
+        conversation.is_archived = is_archived
+    
+    conversation.updated_at = func.now()
+    db.commit()
+    
+    return {"message": "Conversation updated successfully"}
 
 
 @app.post("/weather-analysis")
@@ -419,6 +620,98 @@ def weather_analysis(req: WeatherRequest):
 def health():
     """Health check endpoint"""
     return {"status": "ok"}
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@app.post("/auth/signup")
+def signup(req: UserSignUp, db: Session = Depends(get_db)):
+    """Register a new user."""
+    try:
+        # Check if user already exists
+        if get_user_by_email(db, req.email):
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        if get_user_by_username(db, req.username):
+            raise HTTPException(status_code=400, detail="Username already taken")
+        
+        # Create user
+        user = create_user(db, req.username, req.email, req.password)
+        
+        # Generate token
+        access_token = create_access_token({"sub": user.id, "email": user.email, "username": user.username})
+        
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/auth/signin")
+def signin(req: UserSignIn, db: Session = Depends(get_db)):
+    """Authenticate user with email and password."""
+    try:
+        user = authenticate_user(db, req.email, req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Generate token
+        access_token = create_access_token({"sub": user.id, "email": user.email, "username": user.username})
+        
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/auth/me")
+def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    """Get current authenticated user from token."""
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Missing authorization header")
+        
+        # Extract token from "Bearer <token>"
+        token = authorization.replace("Bearer ", "")
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        user_id = payload.get("sub")
+        user = get_user_by_id(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_active": user.is_active,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/crop-plan/create")

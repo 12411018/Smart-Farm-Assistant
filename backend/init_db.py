@@ -1,108 +1,120 @@
-#!/usr/bin/env python3
-"""
-Database initialization script for Smart Farming Assistant.
-Creates tables, initializes schema, and verifies connectivity.
-"""
+"""Database initialization script - Creates all tables and sets up the database."""
 
 import os
+from datetime import datetime, timezone
+from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.orm import sessionmaker
 import sys
-from pathlib import Path
-
-# Add backend to path
-backend_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, backend_path)
-
 from dotenv import load_dotenv
 
-# Load environment
-env_path = Path(backend_path) / '.env'
-load_dotenv(dotenv_path=env_path)
+# Add backend to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database import engine, Base
-from models import CropPlan, CropStage, IrrigationSchedule, IrrigationLog, WeatherLog
+# Load environment variables BEFORE importing database module
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+load_dotenv(env_path)
 
-def init_db():
-    """Initialize database and create all tables."""
-    print("=" * 70)
-    print("🌾 SMART FARMING ASSISTANT - DATABASE INITIALIZATION")
-    print("=" * 70)
-    print()
+from database import Base, DATABASE_URL
+from models import CropPlan, CropStage, IrrigationSchedule, IrrigationLog, WeatherLog, User
+
+def setup_database():
+    """Initialize database with all tables."""
+    print("🔧 Smart Farming Assistant - Database Setup")
+    print("=" * 60)
     
-    # Check database connection
+    # Check if using SQLite or PostgreSQL
+    if "sqlite" in DATABASE_URL.lower():
+        print(f"📦 Database: SQLite (Development)")
+        print(f"   Location: {DATABASE_URL.split(':///')[-1]}")
+    else:
+        print(f"📦 Database: PostgreSQL (Production)")
+        # Hide password in URL display
+        display_url = DATABASE_URL.replace(DATABASE_URL.split(':')[2].split('@')[0], '***')
+        print(f"   URL: {display_url}")
+    
     try:
-        print("1️⃣  Testing database connection...")
+        # Create engine
+        engine = create_engine(DATABASE_URL, future=True, echo=False)
+        
+        # Test connection
+        print("\n✓ Testing database connection...")
         with engine.connect() as conn:
-            result = conn.execute("SELECT 1")
-            print("   ✅ Database connection successful!")
-        print()
-    except Exception as e:
-        print(f"   ❌ Database connection failed: {e}")
-        print("   Make sure PostgreSQL is running and credentials are correct.")
-        return False
-    
-    # Create all tables
-    try:
-        print("2️⃣  Creating tables...")
+            result = conn.execute(text("SELECT 1"))
+            if result.fetchone():
+                print("✓ Database connection successful!")
+        
+        # Create all tables
+        print("\n✓ Creating tables...")
         Base.metadata.create_all(bind=engine)
-        print("   ✅ Tables created successfully!")
-        print("      - CropPlan")
-        print("      - CropStage")
-        print("      - IrrigationSchedule")
-        print("      - IrrigationLog")
-        print("      - WeatherLog")
-        print()
+        print("✓ All tables created/verified!")
+        
+        # Verify tables exist
+        print("\n✓ Verifying table structure...")
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        
+        table_names = [
+            "users",
+            "crop_plans",
+            "crop_stages", 
+            "irrigation_schedule",
+            "irrigation_logs",
+            "weather_logs"
+        ]
+        
+        print(f"   Expected tables: {len(table_names)}")
+        missing_tables = []
+        for table in table_names:
+            if table in existing_tables:
+                print(f"   ✓ {table}")
+            else:
+                print(f"   ✗ {table} (MISSING)")
+                missing_tables.append(table)
+        
+        if missing_tables:
+            print(f"\n⚠️ WARNING: {len(missing_tables)} tables missing!")
+            raise Exception(f"Tables not created: {missing_tables}")
+        
+        print("\n" + "=" * 60)
+        print("✅ DATABASE SETUP COMPLETE!")
+        print("=" * 60)
+        print("\n📝 Next steps:")
+        print("   1. Create backend/.env file with SECRET_KEY")
+        print("   2. Run: npm run dev (frontend)")
+        print("   3. Run: python -m uvicorn main:app --reload (backend)")
+        print("\n💡 Database tables created:")
+        print("   • users - User authentication")
+        print("   • crop_plans - Master crop records")
+        print("   • crop_stages - Growth stages timeline")
+        print("   • irrigation_schedule - Planned irrigations")
+        print("   • irrigation_logs - Executed irrigations")
+        print("   • weather_logs - Historical weather data")
+        
+        return True
+        
     except Exception as e:
-        print(f"   ❌ Failed to create tables: {e}")
+        print(f"\n❌ DATABASE SETUP FAILED!")
+        print(f"Error: {str(e)}")
+        print("\n⚠️ Troubleshooting:")
+        
+        if "postgresql" in DATABASE_URL.lower():
+            print("   For PostgreSQL:")
+            print("   1. Ensure PostgreSQL is running")
+            print("   2. Check database credentials:")
+            print("      - User: meet")
+            print("      - Password: meet")
+            print("      - Host: localhost")
+            print("      - Port: 5432")
+            print("      - Database: smart_irrigation")
+            print("   3. Or set custom DATABASE_URL in backend/.env")
+            print("   4. Or use SQLite instead: DATABASE_URL=sqlite:///./smart_farming.db")
+        
+        print("\n   For SQLite (Fallback):")
+        print("   1. Set in backend/.env: DATABASE_URL=sqlite:///./smart_farming.db")
+        print("   2. Re-run this script")
+        
         return False
-    
-    # Verify tables exist
-    try:
-        print("3️⃣  Verifying tables...")
-        inspector_query = """
-        SELECT table_name FROM information_schema.tables 
-        WHERE table_schema='public'
-        """
-        with engine.connect() as conn:
-            result = conn.execute(inspector_query)
-            tables = [row[0] for row in result]
-            expected_tables = [
-                'crop_plans',
-                'crop_stages', 
-                'irrigation_schedule',
-                'irrigation_logs',
-                'weather_logs'
-            ]
-            for table in expected_tables:
-                if table in tables:
-                    print(f"   ✅ {table}")
-                else:
-                    print(f"   ❌ {table} (MISSING)")
-        print()
-    except Exception as e:
-        print(f"   ⚠️  Could not verify tables: {e}")
-        print("      (Tables may still work, continuing...)")
-        print()
-    
-    # Summary
-    print("=" * 70)
-    print("✅ DATABASE INITIALIZATION COMPLETE")
-    print("=" * 70)
-    print()
-    print("Next steps:")
-    print("  1. Start the backend server:")
-    print("     uvicorn main:app --reload")
-    print("  2. Run the frontend:")
-    print("     npm run dev")
-    print("  3. Create a crop plan from the UI")
-    print()
-    return True
 
-if __name__ == '__main__':
-    try:
-        success = init_db()
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+if __name__ == "__main__":
+    success = setup_database()
+    sys.exit(0 if success else 1)

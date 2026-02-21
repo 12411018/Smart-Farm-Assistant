@@ -1,9 +1,12 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Bot, Droplets, LayoutDashboard, LineChart } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import '../styles/Home.css';
 
 function Home() {
+  const { isAuthenticated, setShowAuthModal } = useAuth();
+
   const cards = [
     {
       id: 2,
@@ -46,12 +49,31 @@ function Home() {
                 workspace.
               </p>
               <div className="hero-ctas">
-                <Link to="/yield" className="btn btn-primary">
-                  Get Started <ArrowRight size={18} />
-                </Link>
-                <Link to="/dashboard" className="btn btn-secondary">
-                  View Dashboard
-                </Link>
+                {isAuthenticated ? (
+                  <>
+                    <Link to="/yield" className="btn btn-primary">
+                      Get Started <ArrowRight size={18} />
+                    </Link>
+                    <Link to="/dashboard" className="btn btn-secondary">
+                      View Dashboard
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setShowAuthModal(true)}
+                      className="btn btn-primary"
+                    >
+                      Start Your Free Trial <ArrowRight size={18} />
+                    </button>
+                    <button
+                      onClick={() => setShowAuthModal(true)}
+                      className="btn btn-secondary"
+                    >
+                      Sign In
+                    </button>
+                  </>
+                )}
               </div>
               <div className="hero-stats">
                 <div>
@@ -80,7 +102,7 @@ function Home() {
           </div>
           <div className="feature-grid">
             {cards.map(({ id, title, description, Icon, link }) => (
-              <Link key={id} to={link} className="feature-link">
+              <Link key={id} to={isAuthenticated ? link : '#'} onClick={() => !isAuthenticated && setShowAuthModal(true)} className="feature-link">
                 <div className="card feature-card">
                   <span className="icon-badge">
                     <Icon size={22} />

@@ -25,3 +25,14 @@ lingua-language-detector==2.0.2
 # Additional utilities
 scipy==1.11.4
 
+fastapi
+uvicorn
+requests
+python-dotenv
+firebase-admin
+sqlalchemy
+psycopg2-binary
+alembicpasslib[bcrypt]
+PyJWT
+google-auth
+google-auth-oauthlib
