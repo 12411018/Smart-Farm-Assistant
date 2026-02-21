@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Cloud, CloudRain, Sun, Wind, Droplets, Eye, MapPin, ShieldAlert, Droplet, Leaf } from 'lucide-react';
 import '../styles/Weather.css';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
+
 function WeatherForecast() {
   const [weather, setWeather] = useState(null);
   const [rules, setRules] = useState(null);
@@ -10,14 +12,13 @@ function WeatherForecast() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [location, setLocation] = useState(null);
-  const backendBaseUrl = 'http://127.0.0.1:8000';
 
   useEffect(() => {
     const fetchWeather = async (lat, lon) => {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetch(`${backendBaseUrl}/weather-analysis`, {
+        const response = await fetch(`${API_BASE}/weather-analysis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lat, lon, include_ai: false }),
@@ -45,7 +46,7 @@ function WeatherForecast() {
     const fetchAiAdvice = async (lat, lon) => {
       try {
         setAiLoading(true);
-        const response = await fetch(`${backendBaseUrl}/weather-analysis`, {
+        const response = await fetch(`${API_BASE}/weather-analysis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lat, lon, include_ai: true }),

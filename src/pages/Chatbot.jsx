@@ -18,6 +18,7 @@ import { Bot, CloudSun, Droplets, Leaf, LineChart, Mic, Send, Volume2 } from 'lu
 import ChatHistory from '../components/ChatHistory'; // NEW: Not in GitHub version
 import '../styles/Chatbot.css';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
 // NEW FEATURE: Get or create a unique user ID that persists across sessions
 function getUserId() {
   let userId = localStorage.getItem('smart_farm_user_id');
@@ -288,8 +289,8 @@ function Chatbot() {
 🌧️ Rainfall Status: No rain expected in next 24 hours
 💰 Budget: Medium-scale farm`;
 
-      // Call FastAPI backend (match current host, port 8000)
-      const backendUrl = `${window.location.protocol}//${window.location.hostname}:8000/chat`;
+      // Call FastAPI backend using environment variable
+      const backendUrl = `${API_BASE}/chat`;
       console.log('Sending request to:', backendUrl);
       console.log('Message:', inputValue);
       
@@ -301,6 +302,7 @@ function Chatbot() {
         body: JSON.stringify({
           message: inputValue,
           context: context,
+          language: 'en',
           conversation_id: currentConversationId,
           user_id: userId,
         }),
@@ -336,7 +338,7 @@ function Chatbot() {
       console.error('Chat error:', error.message);
       const errorMessage = {
         id: messages.length + 2,
-        text: `Connection error: ${error.message}. Make sure FastAPI backend is running on http://127.0.0.1:8000`,
+        text: `Connection error: ${error.message}. Make sure FastAPI backend is running on ${API_BASE}`,
         sender: 'bot',
         timestamp: new Date(),
       };

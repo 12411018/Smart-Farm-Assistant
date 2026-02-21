@@ -8,6 +8,8 @@ const SOIL_TYPES = ['Black', 'Red', 'Alluvial', 'Clay', 'Sandy', 'Loamy'];
 const IRRIGATION_METHODS = ['Drip', 'Sprinkler', 'Flood'];
 const WATER_SOURCES = ['Borewell', 'Canal', 'Rainfed', 'River', 'Pond'];
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
+
 function YieldInput() {
   const [formData, setFormData] = useState({
     cropName: '',
@@ -39,7 +41,7 @@ function YieldInput() {
     setSuccess(false);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/crop-plan/create', {
+      const response = await fetch(`${API_BASE}/crop-plan/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
