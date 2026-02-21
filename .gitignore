@@ -1,44 +1,100 @@
-# Logs
-logs
-*.log
+# ==========================================
+# FRONTEND - Node Modules
+# ==========================================
+node_modules/
+dist/
+build/
+
+# Frontend - Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
+# ==========================================
+# BACKEND - Python
+# ==========================================
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.so
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
+backend/MANIFEST
 
-# Python
-__pycache__/
-*.pyc
+# Backend - Virtual Environment
+backend/venv/
+backend/.venv/
+backend/env/
+backend/ENV/
+backend/env.bak/
+backend/venv.bak/
+
+# Backend - Node modules (if any)
+backend/node_modules/
+backend/npm-debug.log*
+
+# Backend - Build and Distribution
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/pip-wheel-metadata/
+
+# Backend - Application specific
+backend/faiss_store/
+backend/.cache/
+backend/.pytest_cache/
+
+# ==========================================
+# ENVIRONMENT & CREDENTIALS
+# ==========================================
 .env
-.venv/
+.env.local
+.env.*.local
 
-# Node
-node_modules/
-build/
-
-# VS Code
+# ==========================================
+# IDE & EDITOR
+# ==========================================
 .vscode/
-
-# Editor directories and files
-*.local
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+*.swp
+*.swo
+*~
+
+# ==========================================
+# OS
+# ==========================================
 .DS_Store
+Thumbs.db
+
+# ==========================================
+# EDITOR FILES
+# ==========================================
+*.local
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-
-.venv/
-__pycache__/
-backend/faiss_store/
-.env
+# ==========================================
+# LOGS
+# ==========================================
+logs/
+*.log
+*.log.*
 
 

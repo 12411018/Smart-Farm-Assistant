@@ -1,7 +1,7 @@
 """Pydantic schemas shared across endpoints."""
 
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class ChatRequest(BaseModel):
@@ -25,3 +25,36 @@ class CropPlanRequest(BaseModel):
     landSizeAcres: float
     expectedInvestment: Optional[float] = None
     waterSourceType: Optional[str] = None
+
+
+# Authentication schemas
+class UserSignUp(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class UserSignIn(BaseModel):
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+
+class GoogleAuthRequest(BaseModel):
+    token: str
+    username: Optional[str] = None

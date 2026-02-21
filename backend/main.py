@@ -1,12 +1,20 @@
+"""Smart Farming Assistant API - Main Application"""
+
 import os
 import uuid
 import requests
 from datetime import datetime, timezone, date, timedelta
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from vectorstore.search import RAGSearch, build_context_text
+try:
+    from vectorstore.search import RAGSearch, build_context_text
+    RAG_AVAILABLE = True
+except ImportError:
+    RAG_AVAILABLE = False
+    RAGSearch = None
+    build_context_text = None
 from weather_engine.weather_service import fetch_weather_data
 from weather_engine.weather_rules import build_weather_rules
 from weather_engine.weather_ai import generate_weather_advice
@@ -18,7 +26,7 @@ from crop_engine.crop_insights import generate_crop_insight
 from firebase_config import get_firestore, is_firebase_enabled
 from logging_service import log_yield_input, log_plan_created, log_plan_deleted, log_irrigation_adjustment, get_all_logs
 from database import get_db
-from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan
+from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan, User
 from services.crop_status_engine import calculate_crop_status
 from irrigation_engine.decision import generate_irrigation_schedule
 from services.crop_service import (
@@ -32,7 +40,16 @@ from services.crop_service import (
     delete_plan as delete_plan_db,
     fetch_irrigation_logs,
 )
-from schemas import ChatRequest, WeatherRequest, CropPlanRequest
+from services.user_service import (
+    create_user,
+    get_user_by_email,
+    get_user_by_username,
+    get_user_by_id,
+    authenticate_user,
+    create_or_get_google_user,
+)
+from schemas import ChatRequest, WeatherRequest, CropPlanRequest, UserSignUp, UserSignIn, TokenResponse
+from auth import create_access_token, decode_access_token
 
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 # Default to mistral:latest since it is installed locally; override via OLLAMA_MODEL env when needed.
@@ -89,7 +106,7 @@ app.add_middleware(
 )
 
 
-rag_search = RAGSearch()
+rag_search = RAGSearch() if RAG_AVAILABLE else None
 chat_history = []
 
 
@@ -98,7 +115,7 @@ def _as_date(value):
         return value.date()
     if isinstance(value, date):
         return value
-    return None
+    return None 
 
 
 def _start_of_day(dt: datetime) -> datetime:
@@ -230,8 +247,11 @@ def generate_reply(user_message: str) -> str:
     """Generate reply using local Ollama Mistral model."""
     try:
         # Keep retrieval very small to reduce prompt size and latency.
-        chunks = rag_search.retrieve_context(user_message, top_k=2)
-        context_text = build_context_text(chunks)
+        if RAG_AVAILABLE and rag_search:
+            chunks = rag_search.retrieve_context(user_message, top_k=2)
+            context_text = build_context_text(chunks)
+        else:
+            context_text = ""
     except Exception:
         context_text = ""
 
@@ -407,6 +427,98 @@ def weather_analysis(req: WeatherRequest):
 def health():
     """Health check endpoint"""
     return {"status": "ok"}
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@app.post("/auth/signup")
+def signup(req: UserSignUp, db: Session = Depends(get_db)):
+    """Register a new user."""
+    try:
+        # Check if user already exists
+        if get_user_by_email(db, req.email):
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        if get_user_by_username(db, req.username):
+            raise HTTPException(status_code=400, detail="Username already taken")
+        
+        # Create user
+        user = create_user(db, req.username, req.email, req.password)
+        
+        # Generate token
+        access_token = create_access_token({"sub": user.id, "email": user.email, "username": user.username})
+        
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/auth/signin")
+def signin(req: UserSignIn, db: Session = Depends(get_db)):
+    """Authenticate user with email and password."""
+    try:
+        user = authenticate_user(db, req.email, req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Generate token
+        access_token = create_access_token({"sub": user.id, "email": user.email, "username": user.username})
+        
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/auth/me")
+def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    """Get current authenticated user from token."""
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Missing authorization header")
+        
+        # Extract token from "Bearer <token>"
+        token = authorization.replace("Bearer ", "")
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        user_id = payload.get("sub")
+        user = get_user_by_id(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_active": user.is_active,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/crop-plan/create")
