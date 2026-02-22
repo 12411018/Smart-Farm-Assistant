@@ -2,46 +2,27 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CloudDrizzle, Leaf, Wind } from 'lucide-react';
 import Hero from '../components/Hero';
 import IrrigationStatusCard from '../components/IrrigationStatusCard';
-import IrrigationTable from '../components/IrrigationTable';
 import IrrigationLogs from '../components/IrrigationLogs';
 import { useCropContext } from '../context/CropContext';
 import { getLocationWithFallback } from '../utils/locationService';
 import { getWeatherData } from '../services/weatherService';
-import useIrrigationData from '../hooks/useIrrigationData';
+import useIrrigationLogData from '../hooks/useIrrigationLogData';
 import '../styles/Irrigation.css';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
 
 function Irrigation() {
   const { selectedPlan, selectedPlanId, selectedPlanDetails, ensurePlanDetails } = useCropContext();
-  const { data: irrigationData } = useIrrigationData();
   const [weather, setWeather] = useState(null);
   const [insight, setInsight] = useState(null);
-  const [upcomingSchedule, setUpcomingSchedule] = useState([]);
+  const [logsRefreshKey, setLogsRefreshKey] = useState(0);
+  const { status: statusCombined, error: statusError, lastLogId, updatedAt } = useIrrigationLogData(selectedPlanId);
 
   useEffect(() => {
     if (selectedPlanId) {
       ensurePlanDetails(selectedPlanId);
     }
   }, [selectedPlanId, ensurePlanDetails]);
-
-  useEffect(() => {
-    const loadSchedule = async () => {
-      if (!selectedPlanId) return;
-      try {
-        // Get soil moisture from sensor (dashboard)
-        const soilMoisture = Number(irrigationData?.soilRaw ?? null);
-        const url = soilMoisture ? `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}?moisture=${soilMoisture}` : `http://127.0.0.1:8000/irrigation/schedule/${selectedPlanId}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = await response.json();
-          setUpcomingSchedule(data);
-        }
-      } catch {
-        setUpcomingSchedule([]);
-      }
-    };
-
-    loadSchedule();
-  }, [selectedPlanId, irrigationData]);
 
   useEffect(() => {
     const loadWeather = async () => {
@@ -78,15 +59,6 @@ function Irrigation() {
 
   const currentStage = useMemo(() => selectedPlan?.currentStage || null, [selectedPlan]);
 
-  const todayIrrigation = useMemo(() => {
-    if (!upcomingSchedule.length) return null;
-    const today = new Date().toISOString().split('T')[0];
-    return upcomingSchedule.find((item) => {
-      const date = new Date(item.date).toISOString().split('T')[0];
-      return date === today;
-    });
-  }, [upcomingSchedule]);
-
   const adjustmentMessage = useMemo(() => {
     if (!weather) return 'No weather adjustments detected.';
     const adjustments = [];
@@ -97,22 +69,19 @@ function Irrigation() {
     return adjustments.length ? adjustments.join(' | ') : 'No weather adjustments detected.';
   }, [weather]);
 
-  const nextSevenDays = useMemo(() => {
-    if (!upcomingSchedule.length) return [];
-    return upcomingSchedule.map((item) => {
-      const dateStr = (item.date || '').split('T')[0] || item.date;
-      const dateLabel = new Date(dateStr).toLocaleDateString();
-      const weatherAdj = item.autoAdjusted ? 'Weather adjusted' : weather?.rainChance > 60 ? 'Rain risk' : 'Normal';
-      const status = item.status || 'Pending';
-      return {
-        date: dateLabel,
-        stage: item.stage,
-        plannedWater: `${item.water || item.waterAmountLiters || ''} L`,
-        weatherAdjustment: weatherAdj,
-        status,
-      };
-    });
-  }, [upcomingSchedule, weather]);
+  useEffect(() => {
+    if (lastLogId) {
+      console.log('New log ID detected, refreshing logs:', lastLogId);
+      setLogsRefreshKey(Date.now()); // Use timestamp to ensure unique refresh
+    }
+  }, [lastLogId]);
+
+  const formatTime = (value) => {
+    if (!value) return 'N/A';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+    return value;
+  };
 
   if (!selectedPlanId) {
     return (
@@ -141,8 +110,8 @@ function Irrigation() {
           <IrrigationStatusCard
             cropName={selectedPlan?.cropName}
             stage={currentStage}
-            recommendation={todayIrrigation ? 'Yes' : 'No'}
-            waterAmount={todayIrrigation?.water || todayIrrigation?.waterAmountLiters}
+            recommendation={statusCombined?.start ? 'Yes' : 'No'}
+            waterAmount={statusCombined?.end?.water_liters}
             method={selectedPlan?.irrigationMethod}
             adjustment={adjustmentMessage}
           />
@@ -170,14 +139,52 @@ function Irrigation() {
           </div>
         </div>
 
-        <IrrigationTable rows={nextSevenDays} />
+        <div className="irrigation-grid">
+          <div className="card irrigation-status-panel">
+            <h3>Irrigation Status</h3>
+            {statusError && <p className="status-error">Status error: {statusError.message || statusError}</p>}
+            {updatedAt && <p className="status-timestamp">Last updated: {new Date(updatedAt).toLocaleTimeString()}</p>}
 
-        <div className="irrigation-bottom">
-          <IrrigationLogs cropPlanId={selectedPlanId} />
+            {statusCombined?.start || statusCombined?.end ? (
+              <div className="status-grid">
+                <div>
+                  <span>Start Time</span>
+                  <strong>{formatTime(statusCombined?.start?.start_time)}</strong>
+                </div>
+                <div>
+                  <span>End Time</span>
+                  <strong>{formatTime(statusCombined?.end?.end_time)}</strong>
+                </div>
+                <div>
+                  <span>Duration</span>
+                  <strong>{statusCombined?.end?.duration_seconds ? `${statusCombined.end.duration_seconds}s` : 'N/A'}</strong>
+                </div>
+                <div>
+                  <span>Water Used</span>
+                  <strong>{statusCombined?.end?.water_liters ? `${statusCombined.end.water_liters} L` : 'N/A'}</strong>
+                </div>
+                <div>
+                  <span>Soil Moisture</span>
+                  <strong>{statusCombined?.start?.soil ?? 'N/A'}</strong>
+                </div>
+                <div>
+                  <span>Rain</span>
+                  <strong>{statusCombined?.start?.rain ?? 'N/A'}</strong>
+                </div>
+              </div>
+            ) : (
+              <p>No irrigation start/end data available yet.</p>
+            )}
+          </div>
+
           <div className="insight-box card">
             <h3>Smart Insight</h3>
             {insight ? <p>{insight}</p> : <p>Loading crop insight...</p>}
           </div>
+        </div>
+
+        <div className="irrigation-bottom">
+          <IrrigationLogs cropPlanId={selectedPlanId} refreshKey={logsRefreshKey} />
         </div>
       </div>
     </div>

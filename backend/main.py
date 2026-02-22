@@ -1,6 +1,8 @@
 import os
 import uuid
 import requests
+import threading
+import time
 from datetime import datetime, timezone, date, timedelta
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
@@ -17,7 +19,7 @@ from crop_engine.intelligence import compute_water_liters
 from crop_engine.crop_insights import generate_crop_insight
 from firebase_config import get_firestore, is_firebase_enabled
 from logging_service import log_yield_input, log_plan_created, log_plan_deleted, log_irrigation_adjustment, get_all_logs
-from database import get_db
+from database import get_db, SessionLocal
 from models import CropStage, IrrigationSchedule, IrrigationLog, CropPlan
 from services.crop_status_engine import calculate_crop_status
 from irrigation_engine.decision import generate_irrigation_schedule
@@ -32,7 +34,7 @@ from services.crop_service import (
     delete_plan as delete_plan_db,
     fetch_irrigation_logs,
 )
-from schemas import ChatRequest, WeatherRequest, CropPlanRequest
+from schemas import ChatRequest, WeatherRequest, CropPlanRequest, IrrigationStatusPayload
 
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 # Default to mistral:latest since it is installed locally; override via OLLAMA_MODEL env when needed.
@@ -89,8 +91,35 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _start_threshold_sync():
+    global _threshold_sync_started
+    if _threshold_sync_started:
+        return
+    _threshold_sync_started = True
+    
+    # Start threshold sync worker thread
+    worker = threading.Thread(target=_threshold_sync_loop, name="threshold-sync", daemon=True)
+    worker.start()
+    
+    # Warm minimal dependencies
+    try:
+        get_firestore()  # Initialize Firebase
+        db_gen = get_db()
+        session = next(db_gen)
+        try:
+            _mark_missed_irrigations(session)
+        finally:
+            session.close()
+            db_gen.close()
+    except Exception:
+        pass
+
+
 rag_search = RAGSearch()
 chat_history = []
+
+_threshold_sync_started = False
 
 
 def _as_date(value):
@@ -101,11 +130,91 @@ def _as_date(value):
     return None
 
 
+def _parse_status_datetime(raw: str | None):
+    """Parse ESP timestamp as IST (UTC+5:30) timezone."""
+    if not raw:
+        return None
+    cleaned = raw.replace("\n", " ").strip()
+    formats = [
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ]
+    # IST is UTC+5:30
+    from datetime import timezone as tz, timedelta as td
+    ist = tz(td(hours=5, minutes=30))
+    
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            # Treat as IST time
+            return parsed.replace(tzinfo=ist)
+        except ValueError:
+            continue
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=ist)
+    except Exception:
+        return None
+
+
+def _persist_status_log(db: Session, plan_uuid: uuid.UUID, payload: IrrigationStatusPayload):
+    # Parse timestamps from end data (has both start_time and end_time)
+    print(f"[DEBUG] Persisting log - payload.end: {payload.end}")
+    print(f"[DEBUG] Persisting log - payload.start: {payload.start}")
+    
+    if payload.end:
+        start_ts = _parse_status_datetime(payload.end.start_time) if payload.end.start_time else None
+        end_ts = _parse_status_datetime(payload.end.end_time) if payload.end.end_time else None
+        water_liters = payload.end.water_liters if payload.end.water_liters is not None else 0.0
+        duration_seconds = payload.end.duration_seconds if payload.end.duration_seconds is not None else 0
+        event_text = payload.end.event or "IRRIGATION_COMPLETED"
+        print(f"[DEBUG] Parsed - start_ts: {start_ts}, end_ts: {end_ts}, water: {water_liters}L, duration: {duration_seconds}s")
+    elif payload.start:
+        start_ts = _parse_status_datetime(payload.start.start_time)
+        end_ts = None
+        water_liters = 0.0
+        duration_seconds = 0
+        event_text = payload.start.event or "IRRIGATION_STARTED"
+    else:
+        start_ts = None
+        end_ts = None
+        water_liters = 0.0
+        duration_seconds = 0
+        event_text = "UNKNOWN"
+
+    irrigation_date = _as_date(end_ts) or _as_date(start_ts) or datetime.now(timezone.utc).date()
+    status_text = event_text.lower().replace("irrigation_", "") if "_" in event_text else event_text.lower()
+    weather_adjustment = event_text
+
+    log_row = IrrigationLog(
+        crop_plan_id=plan_uuid,
+        irrigation_date=irrigation_date,
+        original_amount=water_liters,
+        adjusted_amount=water_liters,
+        weather_adjustment=weather_adjustment,
+        weather_adjustment_percent=0,
+        planned_liters=water_liters,
+        actual_liters=water_liters,
+        duration_seconds=int(duration_seconds or 0),
+        status=status_text,
+        auto_triggered=False,
+    )
+    log_row.created_at = end_ts or start_ts or datetime.now(timezone.utc)
+
+    db.add(log_row)
+    db.commit()
+    db.refresh(log_row)
+    print(f"[DEBUG] Log saved with ID: {log_row.id}, created_at: {log_row.created_at}")
+    return log_row
+
+
 def _start_of_day(dt: datetime) -> datetime:
     return datetime.combine(dt.date(), datetime.min.time(), tzinfo=timezone.utc)
 
 
-def _compute_weather_adjustment(weather: dict | None):
+def _compute_weather_adjustment(weather: dict | None, ignore_rain: bool = False):
     """Return (factor, reason, should_skip)."""
     if not weather:
         return 1.0, "No weather data", False
@@ -117,7 +226,7 @@ def _compute_weather_adjustment(weather: dict | None):
     wind = weather.get("wind") or weather.get("windSpeed") or 0
 
     # Skip when both amount and probability are strong.
-    if rain_amount >= 5 and rain_chance >= 70:
+    if not ignore_rain and rain_amount >= 5 and rain_chance >= 70:
         return 0.0, f"Skip: rain {rain_amount}mm @ {rain_chance}%", True
 
     factor = 1.0
@@ -141,8 +250,164 @@ def _compute_weather_adjustment(weather: dict | None):
     return factor, "; ".join(reasons) if reasons else "No adjustment", False
 
 
+SOIL_MOISTURE_THRESHOLDS = {
+    "rice": 70,
+    "wheat": 45,
+    "maize": 50,
+    "tomato": 55,
+    "cotton": 40,
+}
+DEFAULT_SOIL_THRESHOLD = 50
+SOIL_MOISTURE_STOP_THRESHOLDS = {
+    "rice": 75,
+    "wheat": 50,
+    "maize": 55,
+    "tomato": 60,
+    "cotton": 45,
+}
+DEFAULT_SOIL_STOP_THRESHOLD = 55
+
+
+def _fetch_sensor_current():
+    """Fetch realtime sensor readings from Firebase RTDB irrigation/current."""
+    base_url = os.getenv("FIREBASE_DATABASE_URL")
+    if not base_url:
+        return None
+
+    base_url = base_url.rstrip("/")
+    candidate_urls = [
+        f"{base_url}/irrigation/current.json",
+        f"{base_url}/irrigation.json",
+    ]
+
+    for url in candidate_urls:
+        try:
+            response = requests.get(url, timeout=10)
+        except requests.RequestException:
+            continue
+        if not response.ok:
+            continue
+        try:
+            data = response.json()
+        except ValueError:
+            continue
+
+        if isinstance(data, dict) and "current" in data and isinstance(data.get("current"), dict):
+            merged = {k: v for k, v in data.items() if k != "current"}
+            merged.update(data.get("current") or {})
+            return merged
+        if isinstance(data, dict):
+            return data
+
+    return None
+
+
+def _pick_sensor_number(sensor: dict | None, *keys: str):
+    if not sensor:
+        return None
+    for key in keys:
+        if key not in sensor:
+            continue
+        value = sensor.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _parse_sensor_timestamp(sensor: dict | None):
+    if not sensor:
+        return None
+    raw = sensor.get("createdAt") or sensor.get("timestamp") or sensor.get("ts") or sensor.get("time")
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        if raw > 1_000_000_000_000:
+            return datetime.fromtimestamp(raw / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(raw, tz=timezone.utc)
+    if isinstance(raw, str):
+        value = raw.strip()
+        try:
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            dt = datetime.fromisoformat(value)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _get_crop_thresholds(crop_name: str):
+    name = (crop_name or "").strip().lower()
+    threshold = SOIL_MOISTURE_THRESHOLDS.get(name, DEFAULT_SOIL_THRESHOLD)
+    stop_threshold = SOIL_MOISTURE_STOP_THRESHOLDS.get(
+        name,
+        max(DEFAULT_SOIL_STOP_THRESHOLD, threshold + 5),
+    )
+    return threshold, stop_threshold
+
+
+def _write_thresholds_to_rtdb(plan_id: uuid.UUID, crop_name: str, threshold: float, stop_threshold: float):
+    base_url = os.getenv("FIREBASE_DATABASE_URL")
+    if not base_url:
+        return False, "Firebase RTDB URL not configured"
+
+    base_url = base_url.rstrip("/")
+    path = f"{base_url}/irrigation/thresholds/{plan_id}.json"
+    payload = {
+        "cropName": crop_name,
+        "minThreshold": threshold,
+        "maxThreshold": stop_threshold,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        response = requests.patch(path, json=payload, timeout=10)
+    except requests.RequestException as exc:
+        return False, f"RTDB request failed: {exc}"
+
+    if not response.ok:
+        return False, f"RTDB error: {response.status_code}"
+
+    return True, "ok"
+
+
+def _sync_thresholds_for_active_plans():
+    db = SessionLocal()
+    try:
+        plans = db.query(CropPlan).filter(CropPlan.status == "active").all()
+        for plan in plans:
+            threshold, stop_threshold = _get_crop_thresholds(plan.crop_name)
+            _write_thresholds_to_rtdb(plan.id, plan.crop_name, threshold, stop_threshold)
+    finally:
+        db.close()
+
+
+def _threshold_sync_loop(interval_seconds: int = 300):
+    while True:
+        try:
+            _sync_thresholds_for_active_plans()
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[WARNING] Threshold sync failed: {exc}")
+        time.sleep(interval_seconds)
+
+
+def _merge_sensor_weather(sensor: dict | None, weather: dict | None) -> dict | None:
+    if not sensor and not weather:
+        return None
+
+    merged = dict(weather or {})
+    for key in ("temp", "temperature", "humidity", "rain", "wind", "rain_chance", "rainChance"):
+        if key in (sensor or {}):
+            merged[key] = sensor.get(key)
+    return merged
+
+
 def _mark_missed_irrigations(db: Session):
-    """Mark past-due pending irrigations as missed and log them."""
+    """Close past-due pending irrigations at end of day."""
     start_today = _start_of_day(datetime.now(timezone.utc))
     missed = (
         db.query(IrrigationSchedule)
@@ -152,26 +417,63 @@ def _mark_missed_irrigations(db: Session):
     )
 
     for entry in missed:
-        entry.status = "missed"
+        entry.status = "completed"
         entry.actual_liters = entry.actual_liters or 0
         entry.executed_at = entry.executed_at or datetime.now(timezone.utc)
-        log_row = IrrigationLog(
-            crop_plan_id=entry.crop_plan_id,
-            irrigation_date=_as_date(entry.date),
-            original_amount=entry.water_amount_liters,
-            adjusted_amount=entry.water_amount_liters,
-            weather_adjustment="Marked missed",
-            auto_triggered=True,
-            planned_liters=entry.water_amount_liters,
-            actual_liters=0,
-            duration_seconds=0,
-            status="missed",
-            weather_adjustment_percent=entry.weather_adjustment_percent or 0,
-        )
-        db.add(log_row)
 
     if missed:
         db.commit()
+
+
+def _ensure_today_schedule(db: Session, plan: CropPlan, lat: float | None = None, lon: float | None = None):
+    today_start = _start_of_day(datetime.now(timezone.utc))
+    today_end = today_start + timedelta(days=1)
+    entry_today = (
+        db.query(IrrigationSchedule)
+        .filter(IrrigationSchedule.crop_plan_id == plan.id)
+        .filter(IrrigationSchedule.date >= today_start)
+        .filter(IrrigationSchedule.date < today_end)
+        .order_by(IrrigationSchedule.date)
+        .first()
+    )
+
+    if entry_today is not None:
+        return entry_today
+
+    stages_today = db.query(CropStage).filter(CropStage.crop_plan_id == plan.id).all()
+    stage_name = plan.irrigation_method or "General"
+    today_date = _as_date(today_start) or datetime.now(timezone.utc).date()
+    for stage in stages_today:
+        start = _as_date(stage.start_date)
+        end = _as_date(stage.end_date)
+        if start and end and start <= today_date <= end:
+            stage_name = stage.stage
+            break
+
+    weather_current = fetch_weather_data(lat or 18.45, lon or 73.87).get("current")
+    water_liters = compute_water_liters(
+        plan.crop_name,
+        plan.soil_type,
+        plan.land_size_acres,
+        weather_current,
+        None,
+    )
+
+    entry_today = IrrigationSchedule(
+        crop_plan_id=plan.id,
+        date=today_start,
+        stage=stage_name,
+        water_amount_liters=round(water_liters),
+        method=plan.irrigation_method,
+        status="pending",
+        auto_adjusted=False,
+        actual_liters=0,
+        weather_adjustment_percent=0,
+        executed_at=None,
+    )
+    db.add(entry_today)
+    db.commit()
+    return entry_today
 
 
 def _sync_plan_to_firestore(db_client, crop_plan_id: str, plan_data: dict, stages: list, irrigation_schedule: list) -> bool:
@@ -653,6 +955,7 @@ def get_irrigation_logs(crop_plan_id: str, limit: int = 100, db: Session = Depen
 
             serialized.append(
                 {
+                    "id": log.id,
                     "date": log.irrigation_date.isoformat() if getattr(log, "irrigation_date", None) else None,
                     "originalAmount": log.original_amount,
                     "adjustedAmount": log.adjusted_amount,
@@ -675,6 +978,52 @@ def get_irrigation_logs(crop_plan_id: str, limit: int = 100, db: Session = Depen
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.delete("/irrigation/logs/{crop_plan_id}/clear")
+def clear_irrigation_logs(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Clear all irrigation logs for a specific crop plan."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        deleted_count = db.query(IrrigationLog).filter(IrrigationLog.crop_plan_id == plan_uuid).delete()
+        db.commit()
+        print(f"[INFO] Cleared {deleted_count} irrigation logs for plan {crop_plan_id}")
+        return {"success": True, "deletedCount": deleted_count}
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[ERROR] Failed to clear logs: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/irrigation/logs/status/{crop_plan_id}")
+def store_irrigation_status_log(
+    crop_plan_id: str,
+    payload: IrrigationStatusPayload,
+    db: Session = Depends(get_db),
+):
+    """Persist combined start/end irrigation status coming from the RTDB stream."""
+
+    try:
+        try:
+            plan_uuid = uuid.UUID(crop_plan_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid crop plan id")
+
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        log_row = _persist_status_log(db, plan_uuid, payload)
+        print(f"[INFO] Saved irrigation log with ID: {log_row.id} for plan {crop_plan_id}")
+        return {"success": True, "logId": log_row.id}
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[ERROR] Failed to save irrigation log: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/irrigation/schedule/{crop_plan_id}")
 def get_irrigation_schedule(
     crop_plan_id: str,
@@ -691,6 +1040,9 @@ def get_irrigation_schedule(
         plan = db.get(CropPlan, plan_uuid)
         if plan is None:
             raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        _mark_missed_irrigations(db)
+        _ensure_today_schedule(db, plan, lat, lon)
 
         # Regenerate on demand using Weather API (moisture ignored). If today's entry is completed, start from tomorrow.
         if refresh or moisture is not None:
@@ -712,17 +1064,28 @@ def get_irrigation_schedule(
 
             generate_irrigation_schedule(db, plan, stages, weather_current, None, start_date=start_date)
 
-        today = datetime.now(timezone.utc)
+        today = _start_of_day(datetime.now(timezone.utc))
         entries = (
             db.query(IrrigationSchedule)
             .filter(IrrigationSchedule.crop_plan_id == plan_uuid)
             .filter(IrrigationSchedule.date >= today)
             .filter(IrrigationSchedule.status != "completed")
             .order_by(IrrigationSchedule.date)
-            .limit(limit)
             .all()
         )
-        serialized = [serialize_schedule(item) for item in entries]
+
+        unique_entries = []
+        seen_dates = set()
+        for entry in entries:
+            entry_date = _as_date(entry.date)
+            if entry_date in seen_dates:
+                continue
+            seen_dates.add(entry_date)
+            unique_entries.append(entry)
+            if len(unique_entries) >= limit:
+                break
+
+        serialized = [serialize_schedule(item) for item in unique_entries]
         return serialized
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
@@ -793,6 +1156,55 @@ def get_calendar_events(crop_plan_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/irrigation/status/{crop_plan_id}")
+def fetch_irrigation_status(
+    crop_plan_id: str,
+    save: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Fetch latest start/end status from Firebase RTDB and optionally persist to irrigation_logs."""
+
+    try:
+        try:
+            plan_uuid = uuid.UUID(crop_plan_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid crop plan id")
+
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        base = "https://smart-irrigation-system-f87ad-default-rtdb.asia-southeast1.firebasedatabase.app/irrigation/status"
+        start_url = f"{base}/{crop_plan_id}/start.json"
+        end_url = f"{base}/{crop_plan_id}/end.json"
+
+        start_resp = requests.get(start_url, timeout=5)
+        end_resp = requests.get(end_url, timeout=5)
+        if start_resp.status_code == 404 and end_resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="No irrigation status found")
+
+        start_payload = start_resp.json() if start_resp.ok else None
+        end_payload = end_resp.json() if end_resp.ok else None
+
+        payload = IrrigationStatusPayload(start=start_payload, end=end_payload)  # type: ignore[arg-type]
+
+        log_id = None
+        if save and payload.start and payload.end:
+            log_row = _persist_status_log(db, plan_uuid, payload)
+            log_id = log_row.id
+
+        return {
+            "start": payload.start,
+            "end": payload.end,
+            "saved": bool(log_id),
+            "logId": log_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/irrigation/trigger/{crop_plan_id}")
 def trigger_irrigation(crop_plan_id: str, db: Session = Depends(get_db)):
     """Endpoint polled by Arduino to decide irrigation for today."""
@@ -816,6 +1228,32 @@ def trigger_irrigation(crop_plan_id: str, db: Session = Depends(get_db)):
             "schedule_id": str(entry.id),
             "date": entry.date.isoformat(),
         }
+    except Exception as exc:  # pylint: disable=broad-except
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/irrigation/thresholds/{crop_plan_id}")
+def sync_irrigation_thresholds(crop_plan_id: str, db: Session = Depends(get_db)):
+    """Push per-crop soil thresholds to Firebase RTDB for ESP32."""
+    try:
+        plan_uuid = uuid.UUID(crop_plan_id)
+        plan = db.get(CropPlan, plan_uuid)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Crop plan not found")
+
+        threshold, stop_threshold = _get_crop_thresholds(plan.crop_name)
+        ok, message = _write_thresholds_to_rtdb(plan_uuid, plan.crop_name, threshold, stop_threshold)
+        return {
+            "success": ok,
+            "cropPlanId": crop_plan_id,
+            "cropName": plan.crop_name,
+            "minThreshold": threshold,
+            "maxThreshold": stop_threshold,
+            "rtdbPath": f"irrigation/thresholds/{crop_plan_id}",
+            "message": message,
+        }
+    except HTTPException:
+        raise
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -846,6 +1284,9 @@ def next_command(crop_plan_id: str, lat: float | None = None, lon: float | None 
                 "reason": "No pending irrigation today",
             }
 
+        plan = db.get(CropPlan, plan_uuid)
+        crop_name = (plan.crop_name if plan else "").strip()
+
         weather = None
         if lat is not None and lon is not None:
             try:
@@ -854,23 +1295,83 @@ def next_command(crop_plan_id: str, lat: float | None = None, lon: float | None 
             except Exception:
                 weather = None
 
-        factor, reason, should_skip = _compute_weather_adjustment(weather)
+        sensor_current = _fetch_sensor_current()
+        sensor_ts = _parse_sensor_timestamp(sensor_current) or datetime.now(timezone.utc)
+        soil_percent = _pick_sensor_number(
+            sensor_current,
+            "soilPercent",
+            "soil_percent",
+            "soil",
+            "soilMoisture",
+        )
+
+        threshold = SOIL_MOISTURE_THRESHOLDS.get(crop_name.lower(), DEFAULT_SOIL_THRESHOLD)
+        stop_threshold = SOIL_MOISTURE_STOP_THRESHOLDS.get(
+            crop_name.lower(),
+            max(DEFAULT_SOIL_STOP_THRESHOLD, threshold + 5),
+        )
+        if soil_percent is None:
+            return {
+                "action": "SKIP",
+                "decision": "NO_IRRIGATION",
+                "liters": 0,
+                "duration_seconds": 0,
+                "soil_percent": None,
+                "threshold_used": threshold,
+                "stop_threshold": stop_threshold,
+                "reason": "Soil moisture sensor value missing",
+            }
+
+        if soil_percent >= stop_threshold:
+            return {
+                "action": "SKIP",
+                "decision": "NO_IRRIGATION",
+                "liters": 0,
+                "duration_seconds": 0,
+                "soil_percent": soil_percent,
+                "threshold_used": threshold,
+                "stop_threshold": stop_threshold,
+                "reason": f"Soil moisture {soil_percent:.1f}% is above stop threshold {stop_threshold}%",
+            }
+
+        if soil_percent >= threshold:
+            return {
+                "action": "SKIP",
+                "decision": "NO_IRRIGATION",
+                "liters": 0,
+                "duration_seconds": 0,
+                "soil_percent": soil_percent,
+                "threshold_used": threshold,
+                "stop_threshold": stop_threshold,
+                "reason": f"Soil moisture {soil_percent:.1f}% is above start threshold {threshold}%",
+            }
+
+        merged_current = _merge_sensor_weather(sensor_current, weather)
+        if merged_current is not None:
+            merged_current = {
+                **merged_current,
+                "rain": 0,
+                "rain_chance": 0,
+                "rainChance": 0,
+            }
+
+        factor, reason, _ = _compute_weather_adjustment(merged_current, ignore_rain=True)
 
         planned = entry.water_amount_liters or 0
         adjusted = round(planned * factor) if planned else 0
         weather_pct = round(((adjusted - planned) / planned) * 100, 2) if planned else 0
         now_ts = datetime.now(timezone.utc)
 
-        if should_skip or adjusted <= 0:
-            entry.status = "skipped"
+        if adjusted <= 0:
+            entry.status = "pending"
             entry.actual_liters = 0
-            entry.executed_at = now_ts
+            entry.executed_at = sensor_ts
             entry.weather_adjustment_percent = -100 if planned else 0
             entry.auto_adjusted = True
 
             log_row = IrrigationLog(
                 crop_plan_id=plan_uuid,
-                irrigation_date=_as_date(entry.date),
+                irrigation_date=_as_date(sensor_ts) or _as_date(entry.date),
                 original_amount=planned,
                 adjusted_amount=0,
                 weather_adjustment=reason,
@@ -878,28 +1379,33 @@ def next_command(crop_plan_id: str, lat: float | None = None, lon: float | None 
                 planned_liters=planned,
                 actual_liters=0,
                 duration_seconds=0,
-                status="skipped",
+                status="irrigated",
                 weather_adjustment_percent=entry.weather_adjustment_percent,
             )
+            log_row.created_at = sensor_ts
             db.add(log_row)
             db.commit()
             return {
                 "action": "SKIP",
+                "decision": "NO_IRRIGATION",
                 "liters": 0,
                 "duration_seconds": 0,
+                "soil_percent": soil_percent,
+                "threshold_used": threshold,
+                "stop_threshold": stop_threshold,
                 "reason": reason,
             }
 
         duration_seconds = int(max(0, adjusted) / 10)
-        entry.status = "completed"
+        entry.status = "pending"
         entry.actual_liters = adjusted
-        entry.executed_at = now_ts
+        entry.executed_at = sensor_ts
         entry.weather_adjustment_percent = weather_pct
         entry.auto_adjusted = entry.auto_adjusted or factor != 1.0
 
         log_row = IrrigationLog(
             crop_plan_id=plan_uuid,
-            irrigation_date=_as_date(entry.date),
+            irrigation_date=_as_date(sensor_ts) or _as_date(entry.date),
             original_amount=planned,
             adjusted_amount=adjusted,
             weather_adjustment=reason,
@@ -907,20 +1413,26 @@ def next_command(crop_plan_id: str, lat: float | None = None, lon: float | None 
             planned_liters=planned,
             actual_liters=adjusted,
             duration_seconds=duration_seconds,
-            status="completed",
+            status="irrigated",
             weather_adjustment_percent=weather_pct,
         )
+        log_row.created_at = sensor_ts
         db.add(log_row)
         db.commit()
 
         return {
             "action": "WATER",
+            "decision": "IRRIGATE",
             "liters": adjusted,
             "duration_seconds": duration_seconds,
             "method": entry.method,
             "schedule_id": str(entry.id),
             "date": entry.date.isoformat(),
             "weather_adjustment_percent": weather_pct,
+            "soil_percent": soil_percent,
+            "threshold_used": threshold,
+            "stop_threshold": stop_threshold,
+            "reason": f"Soil moisture {soil_percent:.1f}% is below start threshold {threshold}%",
         }
     except HTTPException:
         raise
@@ -1048,17 +1560,4 @@ def register_soil_moisture(crop_plan_id: str, moisture_percent: float, db: Sessi
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.on_event("startup")
-def warmup():
-    try:
-        # Warm minimal dependencies without blocking on local LLM
-        get_firestore()  # Initialize Firebase
-        db_gen = get_db()
-        session = next(db_gen)
-        try:
-            _mark_missed_irrigations(session)
-        finally:
-            session.close()
-            db_gen.close()
-    except Exception:
-        pass
+

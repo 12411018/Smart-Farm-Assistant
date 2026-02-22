@@ -25,3 +25,18 @@ class CropPlanRequest(BaseModel):
     landSizeAcres: float
     expectedInvestment: Optional[float] = None
     waterSourceType: Optional[str] = None
+
+
+class IrrigationStatusEvent(BaseModel):
+    event: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    water_liters: Optional[float] = None
+    rain: Optional[float] = None
+    soil: Optional[float] = None
+
+
+class IrrigationStatusPayload(BaseModel):
+    start: Optional[IrrigationStatusEvent] = None
+    end: Optional[IrrigationStatusEvent] = None

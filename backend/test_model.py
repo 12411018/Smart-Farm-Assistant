@@ -13,7 +13,7 @@ print("="*60 + "\n")
 # Test 1: General farming question
 print("Test 1: Wheat Yield Question")
 print("-" * 40)
-reply1 = generate_reply(i
+reply1 = generate_reply(
     user_message="How can I increase my wheat yield?",
     context="I farm in Maharashtra with 5 acres, using traditional methods"
 )

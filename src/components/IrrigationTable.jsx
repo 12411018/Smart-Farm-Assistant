@@ -17,7 +17,7 @@ function IrrigationTable({ rows }) {
           <div className="table-row empty">No irrigation events scheduled.</div>
         )}
         {rows.map((row) => (
-          <div key={row.date} className="table-row">
+          <div key={row.id || row.date} className="table-row">
             <span>{row.date}</span>
             <span>{row.stage}</span>
             <span>{row.plannedWater}</span>

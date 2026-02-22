@@ -13,12 +13,46 @@ import useIrrigationData from '../hooks/useIrrigationData';
 import '../styles/Dashboard.css';
 
 function Dashboard() {
-  const { data: irrigationData } = useIrrigationData();
+  const { data: irrigationData, error } = useIrrigationData();
 
-  const temperatureValue = Number(irrigationData?.temperature ?? 27);
-  const humidityValue = Number(irrigationData?.humidity ?? 68);
-  const soilMoistureValue = Number(irrigationData?.soilRaw ?? 45);
-  const soilPhValue = Number(irrigationData?.pH ?? 6.8);
+  const pickNumber = (...candidates) => {
+    for (const v of candidates) {
+      if (v === undefined || v === null) continue;
+      const n = Number(v);
+      if (!Number.isNaN(n)) return n;
+    }
+    return null;
+  };
+
+  const temperatureValue = pickNumber(irrigationData?.temperature);
+  const humidityValue = pickNumber(irrigationData?.humidity);
+
+  const soilMoistureValue = pickNumber(
+    irrigationData?.soil_moisture,
+    irrigationData?.soilPercent,
+    irrigationData?.soil,
+    irrigationData?.soilMoisture,
+    irrigationData?.soilRaw
+  );
+  const soilMoistureUnit = irrigationData?.soilRaw !== undefined && soilMoistureValue === Number(irrigationData?.soilRaw)
+    ? 'raw'
+    : '%';
+
+  const soilPhValue = pickNumber(irrigationData?.ph, irrigationData?.pH);
+
+  const rainSensorValue = pickNumber(
+    irrigationData?.rain_percent,
+    irrigationData?.rainPercent,
+    irrigationData?.rain,
+    irrigationData?.rainRaw
+  );
+  const rainSensorUnit = irrigationData?.rainRaw !== undefined && rainSensorValue === Number(irrigationData?.rainRaw)
+    ? 'raw'
+    : '%';
+  
+  const lastUpdated = irrigationData?.timestamp || null;
+
+  const displayValue = (val) => (val === null || Number.isNaN(val) ? '--' : val);
 
   const farmMetrics = [
     {
@@ -50,7 +84,7 @@ function Dashboard() {
       title: 'Soil Moisture',
       Icon: Droplets,
       value: soilMoistureValue,
-      unit: '%',
+      unit: soilMoistureUnit,
       status: 'good',
       trend: 'down',
       change: '-3%',
@@ -68,6 +102,18 @@ function Dashboard() {
       change: '+4%',
       min: 50,
       max: 80,
+    },
+    {
+      id: 5,
+      title: 'Rain Sensor',
+      Icon: Activity,
+      value: rainSensorValue,
+      unit: rainSensorUnit,
+      status: 'good',
+      trend: 'up',
+      change: '+0',
+      min: 0,
+      max: 4095,
     },
   ];
 
@@ -101,8 +147,33 @@ function Dashboard() {
           <div className="header-icon">
             <LayoutDashboard size={28} />
           </div>
-          <h1>Farm Dashboard</h1>
-          <p>Real-time monitoring of your farm metrics and crop status.</p>
+          <div style={{ flex: 1 }}>
+            <h1>
+              Farm Dashboard
+              {irrigationData && (
+                <span style={{ 
+                  display: 'inline-block', 
+                  width: '8px', 
+                  height: '8px', 
+                  borderRadius: '50%', 
+                  backgroundColor: '#27ae60',
+                  marginLeft: '12px',
+                  animation: 'pulse 2s infinite'
+                }} title="Live data streaming" />
+              )}
+            </h1>
+            <p>Real-time monitoring of your farm metrics and crop status.</p>
+            {lastUpdated && (
+              <p style={{ fontSize: '0.9rem', color: '#888', marginTop: '4px' }}>
+                Last updated: {lastUpdated}
+              </p>
+            )}
+            {error && (
+              <p style={{ fontSize: '0.9rem', color: '#e74c3c', marginTop: '4px' }}>
+                Error: Unable to connect to sensors
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="dashboard-grid">
@@ -127,7 +198,7 @@ function Dashboard() {
                   </div>
                   <h3>{metric.title}</h3>
                   <div className="metric-value-container">
-                    <span className="metric-value">{metric.value}</span>
+                    <span className="metric-value">{displayValue(metric.value)}</span>
                     <span className="metric-unit">{metric.unit}</span>
                   </div>
                   <div className="mini-chart"></div>
@@ -135,7 +206,10 @@ function Dashboard() {
                     <div
                       className="progress-fill"
                       style={{
-                        width: `${((metric.value - metric.min) / (metric.max - metric.min)) * 100}%`,
+                        width:
+                          metric.value === null || Number.isNaN(metric.value)
+                            ? '0%'
+                            : `${((metric.value - metric.min) / (metric.max - metric.min)) * 100}%`,
                         backgroundColor: getStatusColor(metric.status),
                       }}
                     ></div>

@@ -1,7 +1,19 @@
 /* Dashboard Page Styles */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+}
+
 .dashboard-page {
   flex: 1;
   padding: 3rem 0 4rem;
+  color: #1f2d2a;
 }
 
 .dashboard-header {
@@ -34,8 +46,24 @@
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1.5rem;
+  align-items: stretch;
+}
+
+.metric-card.card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  padding: 1.2rem;
+}
+
+.metric-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .weather-info-card {
@@ -120,11 +148,11 @@
 .metric-value {
   font-size: 2rem;
   font-weight: 700;
-  color: var(--primary);
+  color: #123325;
 }
 
 .metric-unit {
-  color: var(--muted);
+  color: #3b4b45;
   font-size: 0.9rem;
 }
 
@@ -160,7 +188,7 @@
 
 .metric-status {
   font-size: 0.85rem;
-  color: var(--muted);
+  color: #2f423a;
   margin: 0;
 }
 
