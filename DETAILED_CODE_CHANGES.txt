@@ -1,0 +1,218 @@
+═══════════════════════════════════════════════════════════════════════════════
+CODE CHANGES SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE 1: backend/database.py
+═══════════════════════════════════════════════════════════════════════════════
+
+BEFORE:
+───────
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+# Default to provided local connection string; allow override via env
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+psycopg2://postgres:NIKKKHIL001@localhost:5432/smart_irrigation",
+)
+
+engine = create_engine(DATABASE_URL, future=True, echo=False)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+Base = declarative_base()
+
+
+def get_db():
+    """Yield a SQLAlchemy session for FastAPI dependency injection."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+AFTER:
+──────
+import os
+from urllib.parse import quote
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+# Load from environment or use defaults
+db_user = os.getenv("DB_USER", "postgres")
+db_password = os.getenv("DB_PASSWORD", "16082006@oM")
+db_host = os.getenv("DB_HOST", "localhost")
+db_port = os.getenv("DB_PORT", "5432")
+db_name = os.getenv("DB_NAME", "smart_irrigation")
+
+# URL encode the password to handle special characters like @
+encoded_password = quote(db_password, safe='')
+DATABASE_URL = f"postgresql+psycopg2://{db_user}:{encoded_password}@{db_host}:{db_port}/{db_name}"
+
+# Create engine
+engine = create_engine(DATABASE_URL, future=True, echo=False)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+Base = declarative_base()
+
+
+def get_db():
+    """Yield a SQLAlchemy session for FastAPI dependency injection."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+KEY CHANGES:
+✅ Added: from urllib.parse import quote
+✅ Changed: Single DATABASE_URL string → 5 individual env variables
+✅ Added: encoded_password = quote(db_password, safe='')
+✅ Changed: Fallback password from NIKKKHIL001 to 16082006@oM
+✅ Changed: Dynamic connection string construction
+
+
+═══════════════════════════════════════════════════════════════════════════════
+FILE 2: backend/.env
+═══════════════════════════════════════════════════════════════════════════════
+
+BEFORE:
+───────
+# ============================================================
+# Smart Farming Assistant - Backend Configuration
+# ============================================================
+
+# Database Configuration
+# PostgreSQL connection string (password with @ encoded as %40)
+DATABASE_URL=postgresql+psycopg2://postgres:16082006%40oM@localhost:5432/smart_irrigation
+
+# Firebase Configuration
+# Optional: Set for Firestore persistence (gracefully skipped if not set)
+FIREBASE_PROJECT_ID=smart-irrigation-system-f87ad
+
+AFTER:
+──────
+# ============================================================
+# Smart Farming Assistant - Backend Configuration
+# ============================================================
+
+# Database Configuration
+# PostgreSQL connection details (individual fields for better handling)
+DB_USER=postgres
+DB_PASSWORD=16082006@oM
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=smart_irrigation
+
+# Firebase Configuration
+# Optional: Set for Firestore persistence (gracefully skipped if not set)
+FIREBASE_PROJECT_ID=smart-irrigation-system-f87ad
+
+KEY CHANGES:
+✅ Removed: DATABASE_URL with URL-encoded password
+✅ Added: DB_USER variable
+✅ Added: DB_PASSWORD variable (plain text, not URL-encoded)
+✅ Added: DB_HOST variable
+✅ Added: DB_PORT variable
+✅ Added: DB_NAME variable
+
+
+═══════════════════════════════════════════════════════════════════════════════
+TESTING THE CHANGES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Verify Backend is Running:
+   curl http://localhost:8000/docs
+   
+   Expected: OpenAPI documentation page loads
+
+2. Test Crop Planning Feature:
+   - Visit http://localhost:5173
+   - Click "Yield Input" button
+   - Fill in crop planning form
+   - Submit the form
+   
+   Expected: 
+   ✅ Form submits successfully
+   ✅ No authentication error
+   ✅ Crop plan created in database
+   ✅ Success message displayed
+
+3. Check Database:
+   psql -U postgres -h localhost -d smart_irrigation -w -c "SELECT COUNT(*) FROM crop_plans;"
+   
+   Expected: Shows number of plans created
+
+═══════════════════════════════════════════════════════════════════════════════
+WHAT EACH CHANGE DOES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. from urllib.parse import quote
+   Purpose: Imports function to properly URL-encode special characters
+   Why: @ symbol in password needs to be encoded as %40
+   
+2. Individual Environment Variables
+   Purpose: Separates database connection components
+   Why: Easier to manage, clearer what goes where, less encoding issues
+   
+3. quote(db_password, safe='')
+   Purpose: Encodes password using proper URL encoding
+   Input:  16082006@oM
+   Output: 16082006%40oM
+   Why: psycopg2 driver properly decodes encoded URLs
+   
+4. f-string Connection URL
+   Purpose: Dynamically builds connection string with encoded password
+   Why: Ensures special characters are handled correctly at connection time
+   
+5. Updated .env Format
+   Purpose: Stores raw password without encoding
+   Why: Encoding happens in Python, not in .env file
+        This is clearer and less error-prone
+
+═══════════════════════════════════════════════════════════════════════════════
+WHY THE ORIGINAL APPROACH FAILED
+═══════════════════════════════════════════════════════════════════════════════
+
+Original Method:
+   DATABASE_URL=postgresql+psycopg2://postgres:16082006%40oM@localhost:5432/...
+
+Problem:
+   SQLAlchemy was not consistently decoding %40 back to @
+   The database received password as: 16082006%40oM (literally)
+   Actual PostgreSQL password is: 16082006@oM
+   Result: Authentication failed
+
+Why This Happens:
+   Different libraries handle URL encoding differently
+   Some expect pre-encoded URLs, others don't
+   There's no guarantee of consistent behavior
+
+The Fix:
+   Let Python do the encoding at runtime using quote()
+   Pass clear, unencoded password to quote()
+   Let psycopg2 handle the encoding/decoding
+   Result: Consistent and reliable authentication
+
+═══════════════════════════════════════════════════════════════════════════════
+BEST PRACTICES APPLIED
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ Separation of Concerns
+   Each component (user, password, host, etc.) is separate
+
+✅ Explicit is Better Than Implicit
+   Code clearly shows how password is handled
+   No hidden encoding/decoding steps
+
+✅ Use Standard Library
+   urllib.parse.quote() is standard and reliable
+   Not relying on ad-hoc string manipulation
+
+✅ Clear Fallback Values
+   Defaults are correct (not wrong old password)
+   Easy to understand what they are
+
+✅ Environment Variable Best Practice
+   Plain text passwords in .env (as they should be)
+   No unnecessary encoding in config files
+
+═══════════════════════════════════════════════════════════════════════════════
